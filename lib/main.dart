@@ -1,4 +1,8 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_functions/cloud_functions.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 
@@ -12,9 +16,17 @@ import 'workspace/settings_screen.dart';
 import 'workspace/team_screen.dart';
 import 'workspace/workspace_shell.dart';
 
+const _useEmulators = bool.fromEnvironment('USE_EMULATORS', defaultValue: false);
+
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+  if (_useEmulators) {
+    debugPrint('[avokaido_app] Using local Firebase emulators.');
+    await FirebaseAuth.instance.useAuthEmulator('localhost', 9099);
+    FirebaseFirestore.instance.useFirestoreEmulator('localhost', 8080);
+    FirebaseFunctions.instance.useFunctionsEmulator('localhost', 5001);
+  }
   final auth = AuthService();
   runApp(AvokaidoApp(auth: auth));
 }
