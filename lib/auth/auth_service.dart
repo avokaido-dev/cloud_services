@@ -64,6 +64,53 @@ class AuthService extends ChangeNotifier {
     }
   }
 
+  /// Creates a new user with email + password. After success, the
+  /// authStateChanged listener fires and the router moves the user to
+  /// `/create-workspace`.
+  Future<void> signUpWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    _errorMessage = null;
+    try {
+      await _auth.createUserWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = e.message ?? e.code;
+      notifyListeners();
+    }
+  }
+
+  /// Signs an existing user in with email + password.
+  Future<void> signInWithEmail({
+    required String email,
+    required String password,
+  }) async {
+    _errorMessage = null;
+    try {
+      await _auth.signInWithEmailAndPassword(
+        email: email.trim(),
+        password: password,
+      );
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = e.message ?? e.code;
+      notifyListeners();
+    }
+  }
+
+  /// Sends a password-reset email via Firebase Auth.
+  Future<void> sendPasswordResetEmail(String email) async {
+    _errorMessage = null;
+    try {
+      await _auth.sendPasswordResetEmail(email: email.trim());
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = e.message ?? e.code;
+      notifyListeners();
+    }
+  }
+
   Future<void> signOut() => _auth.signOut();
 
   /// Forces the ID token to refresh so custom claims (e.g. a just-created
