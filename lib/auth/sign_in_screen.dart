@@ -440,62 +440,12 @@ class _StepTile extends StatelessWidget {
 // Sign-in card
 // ---------------------------------------------------------------------------
 
-class _SignInCard extends StatefulWidget {
+class _SignInCard extends StatelessWidget {
   const _SignInCard({required this.auth});
   final AuthService auth;
 
   @override
-  State<_SignInCard> createState() => _SignInCardState();
-}
-
-enum _Mode { signUp, signIn }
-
-class _SignInCardState extends State<_SignInCard> {
-  _Mode _mode = _Mode.signUp;
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  bool _busy = false;
-  bool _obscurePassword = true;
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    super.dispose();
-  }
-
-  Future<void> _submit() async {
-    final email = _emailController.text.trim();
-    final password = _passwordController.text;
-    if (email.isEmpty || password.isEmpty) return;
-    setState(() => _busy = true);
-    if (_mode == _Mode.signUp) {
-      await widget.auth.signUpWithEmail(email: email, password: password);
-    } else {
-      await widget.auth.signInWithEmail(email: email, password: password);
-    }
-    if (mounted) setState(() => _busy = false);
-  }
-
-  Future<void> _forgotPassword() async {
-    final email = _emailController.text.trim();
-    if (email.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter your email first.')),
-      );
-      return;
-    }
-    await widget.auth.sendPasswordResetEmail(email);
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Password reset sent to $email.')),
-      );
-    }
-  }
-
-  @override
   Widget build(BuildContext context) {
-    final isSignUp = _mode == _Mode.signUp;
     return Padding(
       key: SignInScreen._signInKey,
       padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -518,148 +468,43 @@ class _SignInCardState extends State<_SignInCard> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text(
-                  isSignUp ? 'Create your account' : 'Welcome back',
+                const Text(
+                  'Sign in to Avokaido',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(
+                  style: TextStyle(
                     fontSize: 22,
                     fontWeight: FontWeight.w700,
                     color: Color(0xFF0E2812),
                   ),
                 ),
                 const SizedBox(height: 6),
-                Text(
-                  isSignUp
-                      ? 'Sign up with your email to create your workspace.'
-                      : 'Sign in to your workspace.',
+                const Text(
+                  'Use your existing account — we never ask for passwords.',
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 13, color: Colors.black54),
+                  style: TextStyle(fontSize: 13, color: Colors.black54),
                 ),
                 const SizedBox(height: 24),
-                TextField(
-                  controller: _emailController,
-                  keyboardType: TextInputType.emailAddress,
-                  autofillHints: const [AutofillHints.email],
-                  decoration: const InputDecoration(
-                    labelText: 'Email',
-                    border: OutlineInputBorder(),
-                    isDense: true,
-                  ),
-                ),
-                const SizedBox(height: 12),
-                TextField(
-                  controller: _passwordController,
-                  obscureText: _obscurePassword,
-                  autofillHints: [
-                    isSignUp
-                        ? AutofillHints.newPassword
-                        : AutofillHints.password,
-                  ],
-                  decoration: InputDecoration(
-                    labelText: 'Password',
-                    helperText: isSignUp ? 'At least 6 characters' : null,
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    suffixIcon: IconButton(
-                      tooltip: _obscurePassword ? 'Show' : 'Hide',
-                      icon: Icon(_obscurePassword
-                          ? Icons.visibility_outlined
-                          : Icons.visibility_off_outlined),
-                      onPressed: () => setState(
-                          () => _obscurePassword = !_obscurePassword),
-                    ),
-                  ),
-                  onSubmitted: (_) => _submit(),
-                ),
-                if (!isSignUp) ...[
-                  const SizedBox(height: 4),
-                  Align(
-                    alignment: Alignment.centerRight,
-                    child: TextButton(
-                      onPressed: _forgotPassword,
-                      child: const Text('Forgot password?'),
-                    ),
-                  ),
-                ],
-                const SizedBox(height: 12),
-                FilledButton(
-                  onPressed: _busy ? null : _submit,
-                  style: FilledButton.styleFrom(
-                    backgroundColor: SignInScreen._brandGreen,
-                    padding: const EdgeInsets.symmetric(vertical: 16),
-                    textStyle: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.w600),
-                  ),
-                  child: _busy
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(
-                              strokeWidth: 2, color: Colors.white),
-                        )
-                      : Text(isSignUp ? 'Create account' : 'Sign in'),
-                ),
-                const SizedBox(height: 12),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      isSignUp
-                          ? 'Already have an account? '
-                          : "Don't have an account? ",
-                      style: const TextStyle(
-                          fontSize: 13, color: Colors.black54),
-                    ),
-                    TextButton(
-                      onPressed: () => setState(() {
-                        _mode = isSignUp ? _Mode.signIn : _Mode.signUp;
-                      }),
-                      style: TextButton.styleFrom(
-                        padding: EdgeInsets.zero,
-                        minimumSize: Size.zero,
-                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      ),
-                      child: Text(isSignUp ? 'Sign in' : 'Sign up'),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 20),
-                const Row(
-                  children: [
-                    Expanded(child: Divider()),
-                    Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 12),
-                      child: Text(
-                        'or continue with',
-                        style:
-                            TextStyle(color: Colors.black45, fontSize: 12),
-                      ),
-                    ),
-                    Expanded(child: Divider()),
-                  ],
-                ),
-                const SizedBox(height: 16),
                 _ProviderButton(
-                  label: 'GitHub',
+                  label: 'Continue with GitHub',
                   icon: Icons.code,
-                  onPressed: widget.auth.signInWithGithub,
+                  onPressed: auth.signInWithGithub,
                 ),
                 const SizedBox(height: 10),
                 _ProviderButton(
-                  label: 'Microsoft',
+                  label: 'Continue with Microsoft',
                   icon: Icons.business,
-                  onPressed: widget.auth.signInWithMicrosoft,
+                  onPressed: auth.signInWithMicrosoft,
                 ),
                 const SizedBox(height: 10),
                 _ProviderButton(
-                  label: 'Apple',
+                  label: 'Continue with Apple',
                   icon: Icons.apple,
-                  onPressed: widget.auth.signInWithApple,
+                  onPressed: auth.signInWithApple,
                 ),
-                if (widget.auth.errorMessage != null) ...[
+                if (auth.errorMessage != null) ...[
                   const SizedBox(height: 16),
                   Text(
-                    widget.auth.errorMessage!,
+                    auth.errorMessage!,
                     textAlign: TextAlign.center,
                     style: const TextStyle(color: Colors.red, fontSize: 13),
                   ),
