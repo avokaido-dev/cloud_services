@@ -63,6 +63,12 @@ class AuthService extends ChangeNotifier {
   bool _pendingEmailLinkNeedsEmail = false;
   bool get pendingEmailLinkNeedsEmail => _pendingEmailLinkNeedsEmail;
 
+  void clearError() {
+    if (_errorMessage == null) return;
+    _errorMessage = null;
+    notifyListeners();
+  }
+
   // ---------------------------------------------------------------------------
   // Sign-in entry points
   // ---------------------------------------------------------------------------
@@ -72,7 +78,8 @@ class AuthService extends ChangeNotifier {
   Future<void> signInWithGoogle() => _signInWith(
         GoogleAuthProvider()
           ..addScope('email')
-          ..addScope('profile'),
+          ..addScope('profile')
+          ..setCustomParameters(const {'prompt': 'select_account'}),
       );
 
   Future<void> signInWithMicrosoft() =>
@@ -214,7 +221,10 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<void> signOut() => _signOutInternal(clearSessionDoc: true);
+  Future<void> signOut() async {
+    clearError();
+    await _signOutInternal(clearSessionDoc: true);
+  }
 
   /// Forces the ID token to refresh so custom claims (e.g. a just-created
   /// workspaceId) propagate immediately instead of waiting for the 1-hour

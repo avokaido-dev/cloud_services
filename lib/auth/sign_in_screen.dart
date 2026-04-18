@@ -265,6 +265,7 @@ class _SignInCardState extends State<_SignInCard> {
   }
 
   Future<void> _tryOAuth(Future<void> Function() fn) async {
+    widget.auth.clearError();
     setState(() => _oauthBusy = true);
     await fn();
     if (mounted) setState(() => _oauthBusy = false);
@@ -274,6 +275,7 @@ class _SignInCardState extends State<_SignInCard> {
     final email = _emailController.text.trim();
     final password = _passwordController.text;
     if (email.isEmpty || password.isEmpty) return;
+    widget.auth.clearError();
     setState(() => _emailBusy = true);
     if (_mode == _EmailMode.signUp) {
       await widget.auth.signUpWithEmail(email: email, password: password);
@@ -291,6 +293,7 @@ class _SignInCardState extends State<_SignInCard> {
       );
       return;
     }
+    widget.auth.clearError();
     await widget.auth.sendPasswordResetEmail(email);
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -400,6 +403,7 @@ class _SignInCardState extends State<_SignInCard> {
   Future<void> _completeEmailLink() async {
     final email = _emailController.text.trim();
     if (email.isEmpty) return;
+    widget.auth.clearError();
     setState(() => _emailBusy = true);
     await widget.auth.completeEmailLinkSignIn(email);
     if (mounted) setState(() => _emailBusy = false);
