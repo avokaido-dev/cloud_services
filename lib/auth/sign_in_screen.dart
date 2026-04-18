@@ -622,6 +622,17 @@ class _SignInCardState extends State<_SignInCard> {
             textAlign: TextAlign.center,
             style: const TextStyle(color: Colors.red, fontSize: 13),
           ),
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.center,
+            child: TextButton(
+              onPressed: widget.auth.clearError,
+              style: TextButton.styleFrom(
+                textStyle: const TextStyle(fontSize: 12.5),
+              ),
+              child: const Text('Dismiss and try again'),
+            ),
+          ),
         ],
         const SizedBox(height: 18),
         const Text(
