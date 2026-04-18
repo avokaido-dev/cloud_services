@@ -13,6 +13,7 @@ import 'investors/investors_screen.dart';
 import 'invite/invite_landing_screen.dart';
 import 'onboarding/create_workspace_screen.dart';
 import 'tutorial/tutorial_screen.dart';
+import 'workspace/billing_screen.dart';
 import 'workspace/costs_screen.dart';
 import 'workspace/download_screen.dart';
 import 'workspace/releases_screen.dart';
@@ -48,6 +49,7 @@ class _AvokaidoAppState extends State<AvokaidoApp> {
   static const _memberHome = '/workspace/download';
   static const _adminOnlyRoutes = <String>{
     '/workspace/costs',
+    '/workspace/billing',
     '/workspace/team',
     '/workspace/releases',
     '/workspace/settings',
@@ -119,6 +121,10 @@ class _AvokaidoAppState extends State<AvokaidoApp> {
           GoRoute(
             path: '/workspace/costs',
             builder: (_, __) => CostsScreen(auth: widget.auth),
+          ),
+          GoRoute(
+            path: '/workspace/billing',
+            builder: (_, __) => BillingScreen(auth: widget.auth),
           ),
           GoRoute(
             path: '/workspace/team',
