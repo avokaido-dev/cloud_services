@@ -516,6 +516,7 @@ class _SignInCardState extends State<_SignInCard> {
   @override
   Widget build(BuildContext context) {
     final signedIn = widget.auth.user != null;
+    final awaitingEmailLink = widget.auth.pendingEmailLinkNeedsEmail;
     return Padding(
       key: SignInScreen._signInKey,
       padding: const EdgeInsets.symmetric(horizontal: 32),
@@ -535,11 +536,86 @@ class _SignInCardState extends State<_SignInCard> {
                 ),
               ],
             ),
-            child: signedIn ? _buildSignedIn(context) : _buildSignedOut(),
+            child: signedIn
+                ? _buildSignedIn(context)
+                : awaitingEmailLink
+                    ? _buildEmailLinkConfirm()
+                    : _buildSignedOut(),
           ),
         ),
       ),
     );
+  }
+
+  Widget _buildEmailLinkConfirm() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Finish signing in',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF0E2812),
+          ),
+        ),
+        const SizedBox(height: 6),
+        const Text(
+          'Confirm the email address you were invited with to complete your '
+          'sign-in. No password needed.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 13, color: Colors.black54),
+        ),
+        const SizedBox(height: 20),
+        TextField(
+          controller: _emailController,
+          keyboardType: TextInputType.emailAddress,
+          autofillHints: const [AutofillHints.email],
+          decoration: const InputDecoration(
+            labelText: 'Email',
+            border: OutlineInputBorder(),
+          ),
+          onSubmitted: (_) => _completeEmailLink(),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: _emailBusy ? null : _completeEmailLink,
+          style: FilledButton.styleFrom(
+            backgroundColor: SignInScreen._brandGreen,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            textStyle:
+                const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+          ),
+          child: _emailBusy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Continue'),
+        ),
+        if (widget.auth.errorMessage != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            widget.auth.errorMessage!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.red, fontSize: 13),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Future<void> _completeEmailLink() async {
+    final email = _emailController.text.trim();
+    if (email.isEmpty) return;
+    setState(() => _emailBusy = true);
+    await widget.auth.completeEmailLinkSignIn(email);
+    if (mounted) setState(() => _emailBusy = false);
   }
 
   Widget _buildSignedIn(BuildContext context) {

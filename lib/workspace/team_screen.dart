@@ -17,7 +17,7 @@ class _TeamScreenState extends State<TeamScreen> {
   final _emailController = TextEditingController();
   bool _sending = false;
   String? _error;
-  String? _lastLandingUrl;
+  _InviteResult? _lastInvite;
   List<_Member> _members = const [];
   bool _loadingMembers = true;
 
@@ -57,16 +57,21 @@ class _TeamScreenState extends State<TeamScreen> {
     setState(() {
       _sending = true;
       _error = null;
-      _lastLandingUrl = null;
+      _lastInvite = null;
     });
     try {
       final result = await FirebaseFunctions.instance
           .httpsCallable('sendInvite')
           .call<Map<String, dynamic>>({'email': email, 'workspaceId': wsId});
       setState(() {
-        _lastLandingUrl = result.data['landingUrl'] as String?;
+        _lastInvite = _InviteResult(
+          email: email,
+          signInLink: result.data['signInLink'] as String?,
+          newlyCreated: result.data['newlyCreated'] as bool? ?? false,
+        );
         _emailController.clear();
       });
+      await _refreshMembers();
     } on FirebaseFunctionsException catch (e) {
       setState(() => _error = e.message ?? e.code);
     } finally {
@@ -132,8 +137,8 @@ class _TeamScreenState extends State<TeamScreen> {
                     ),
                     const SizedBox(height: 4),
                     const Text(
-                      'They receive a link to join this workspace. Links '
-                      'are single-use and valid for 7 days.',
+                      'We create a Firebase account for this email and send '
+                      'a passwordless sign-in link. Valid for 7 days.',
                       style: TextStyle(fontSize: 12, color: Colors.black54),
                     ),
                     const SizedBox(height: 12),
@@ -169,41 +174,9 @@ class _TeamScreenState extends State<TeamScreen> {
                       const SizedBox(height: 8),
                       Text(_error!, style: const TextStyle(color: Colors.red)),
                     ],
-                    if (_lastLandingUrl != null) ...[
+                    if (_lastInvite != null) ...[
                       const SizedBox(height: 12),
-                      Container(
-                        padding: const EdgeInsets.all(12),
-                        decoration: BoxDecoration(
-                          color: Colors.green.shade50,
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            const Text(
-                              'Invite created — share this link:',
-                              style: TextStyle(fontWeight: FontWeight.w600),
-                            ),
-                            const SizedBox(height: 6),
-                            SelectableText(_lastLandingUrl!),
-                            const SizedBox(height: 6),
-                            TextButton.icon(
-                              onPressed: () {
-                                Clipboard.setData(
-                                  ClipboardData(text: _lastLandingUrl!),
-                                );
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                    content: Text('Link copied'),
-                                  ),
-                                );
-                              },
-                              icon: const Icon(Icons.copy, size: 16),
-                              label: const Text('Copy link'),
-                            ),
-                          ],
-                        ),
-                      ),
+                      _InviteResultCard(result: _lastInvite!),
                     ],
                   ],
                 ),
@@ -286,6 +259,87 @@ class _TeamScreenState extends State<TeamScreen> {
                         },
                       ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class _InviteResult {
+  const _InviteResult({
+    required this.email,
+    required this.signInLink,
+    required this.newlyCreated,
+  });
+
+  final String email;
+  final String? signInLink;
+  final bool newlyCreated;
+}
+
+class _InviteResultCard extends StatelessWidget {
+  const _InviteResultCard({required this.result});
+  final _InviteResult result;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.green.shade50,
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.green.shade200),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.mark_email_read_outlined,
+                  size: 18, color: Colors.green),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  result.newlyCreated
+                      ? 'Invited ${result.email}. A Firebase account was '
+                          'created and a passwordless sign-in link was '
+                          'queued for delivery.'
+                      : 'Invited ${result.email}. They already had a Firebase '
+                          'account — a passwordless sign-in link was queued '
+                          'for delivery.',
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+            ],
+          ),
+          if (result.signInLink != null) ...[
+            const SizedBox(height: 12),
+            const Text(
+              'Dev fallback (until SendGrid is wired up): copy and send '
+              'this link manually.',
+              style: TextStyle(fontSize: 11.5, color: Colors.black54),
+            ),
+            const SizedBox(height: 6),
+            SelectableText(
+              result.signInLink!,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontFamily: 'monospace',
+              ),
+              maxLines: 3,
+            ),
+            const SizedBox(height: 6),
+            TextButton.icon(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: result.signInLink!));
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Sign-in link copied')),
+                );
+              },
+              icon: const Icon(Icons.copy, size: 16),
+              label: const Text('Copy link'),
+            ),
+          ],
         ],
       ),
     );

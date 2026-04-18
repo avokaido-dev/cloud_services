@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
+import 'package:web/web.dart' as web;
 
 /// Status of the user's current session, driving the router.
 enum AuthStatus {
@@ -27,7 +28,10 @@ class AuthService extends ChangeNotifier {
   AuthService({FirebaseAuth? auth}) : _auth = auth ?? FirebaseAuth.instance {
     _auth.authStateChanges().listen(_onAuthChanged);
     _handlePendingRedirect();
+    _handlePendingEmailLink();
   }
+
+  static const _pendingEmailKey = 'avokaido.pendingEmailLinkEmail';
 
   final FirebaseAuth _auth;
 
@@ -43,6 +47,9 @@ class AuthService extends ChangeNotifier {
   String? get workspaceRole => _workspaceRole;
   bool get isOrgAdmin => _workspaceRole == 'admin';
   String? get errorMessage => _errorMessage;
+
+  bool _pendingEmailLinkNeedsEmail = false;
+  bool get pendingEmailLinkNeedsEmail => _pendingEmailLinkNeedsEmail;
 
   // ---------------------------------------------------------------------------
   // Sign-in entry points
@@ -80,6 +87,46 @@ class AuthService extends ChangeNotifier {
       _errorMessage = e.toString();
       notifyListeners();
     }
+  }
+
+  // Passwordless invite links: the admin's `sendInvite` function emails a
+  // `generateSignInWithEmailLink` URL that redirects back to `/signin?...`.
+  // We detect the link on load and — if the email is cached from the same
+  // browser — complete the sign-in automatically. If not (e.g. the recipient
+  // clicked the link on a different device), we flip a flag so the UI can
+  // prompt them to type their email, then call [completeEmailLinkSignIn].
+  Future<void> _handlePendingEmailLink() async {
+    final currentUrl = web.window.location.href;
+    if (!_auth.isSignInWithEmailLink(currentUrl)) return;
+
+    final cachedEmail =
+        web.window.localStorage.getItem(_pendingEmailKey);
+    if (cachedEmail != null && cachedEmail.isNotEmpty) {
+      await completeEmailLinkSignIn(cachedEmail);
+    } else {
+      _pendingEmailLinkNeedsEmail = true;
+      notifyListeners();
+    }
+  }
+
+  Future<void> completeEmailLinkSignIn(String email) async {
+    _errorMessage = null;
+    final currentUrl = web.window.location.href;
+    try {
+      await _auth.signInWithEmailLink(
+        email: email.trim(),
+        emailLink: currentUrl,
+      );
+      web.window.localStorage.removeItem(_pendingEmailKey);
+      _pendingEmailLinkNeedsEmail = false;
+      // Strip the long query string from the address bar once consumed.
+      web.window.history.replaceState(null, '', '/#/signin');
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = e.message ?? e.code;
+    } catch (e) {
+      _errorMessage = e.toString();
+    }
+    notifyListeners();
   }
 
   Future<void> _signInWith(AuthProvider provider) async {
