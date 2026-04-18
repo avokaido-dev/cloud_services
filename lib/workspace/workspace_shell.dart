@@ -21,6 +21,8 @@ class WorkspaceShell extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isLoadingWorkspace =
+        auth.status == AuthStatus.signedInPending || auth.workspaceId == null;
     final destinations =
         auth.isOrgAdmin ? _adminDestinations : _memberDestinations;
     final location = GoRouterState.of(context).uri.path;
@@ -31,7 +33,14 @@ class WorkspaceShell extends StatelessWidget {
       appBar: AppBar(
         title: Row(
           children: [
-            const Text('Avokaido'),
+            InkWell(
+              onTap: () => context.go('/signin'),
+              borderRadius: BorderRadius.circular(8),
+              child: const Padding(
+                padding: EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+                child: Text('Avokaido'),
+              ),
+            ),
             if (auth.isOrgAdmin) ...[
               const SizedBox(width: 12),
               const Chip(
@@ -61,7 +70,7 @@ class WorkspaceShell extends StatelessWidget {
       ),
       body: Row(
         children: [
-          if (destinations.length > 1)
+          if (!isLoadingWorkspace && destinations.length > 1)
             NavigationRail(
               selectedIndex: selectedIndex < 0 ? 0 : selectedIndex,
               labelType: NavigationRailLabelType.all,
@@ -75,8 +84,38 @@ class WorkspaceShell extends StatelessWidget {
                   ),
               ],
             ),
-          if (destinations.length > 1) const VerticalDivider(width: 1),
-          Expanded(child: child),
+          if (!isLoadingWorkspace && destinations.length > 1)
+            const VerticalDivider(width: 1),
+          Expanded(
+            child: isLoadingWorkspace
+                ? const _LoadingWorkspaceView()
+                : child,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _LoadingWorkspaceView extends StatelessWidget {
+  const _LoadingWorkspaceView();
+
+  @override
+  Widget build(BuildContext context) {
+    return const Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(strokeWidth: 2.8),
+          ),
+          SizedBox(height: 14),
+          Text(
+            'Loading your workspace…',
+            style: TextStyle(fontSize: 15, color: Colors.black54),
+          ),
         ],
       ),
     );

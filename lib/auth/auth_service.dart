@@ -1,5 +1,5 @@
 import 'dart:async';
-
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:cloud_functions/cloud_functions.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:flutter/foundation.dart';
@@ -25,21 +25,33 @@ enum AuthStatus {
 /// End users sign in via GitHub, Google, Microsoft, or Apple OAuth, with
 /// email/password as a fallback.
 class AuthService extends ChangeNotifier {
-  AuthService({FirebaseAuth? auth}) : _auth = auth ?? FirebaseAuth.instance {
+  AuthService({
+    FirebaseAuth? auth,
+    FirebaseFirestore? firestore,
+  })  : _auth = auth ?? FirebaseAuth.instance,
+        _firestore = firestore ?? FirebaseFirestore.instance {
     _auth.authStateChanges().listen(_onAuthChanged);
     _handlePendingRedirect();
     _handlePendingEmailLink();
   }
 
   static const _pendingEmailKey = 'avokaido.pendingEmailLinkEmail';
+  static const _sessionCollection = 'userSessions';
+  static int _sessionCounter = 0;
 
   final FirebaseAuth _auth;
+  final FirebaseFirestore _firestore;
 
   AuthStatus _status = AuthStatus.signedOut;
   User? _user;
   String? _workspaceId;
   String? _workspaceRole;
   String? _errorMessage;
+  String? _sessionId;
+  StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? _sessionSub;
+  Timer? _sessionHeartbeat;
+  bool _handlingForcedSignOut = false;
+  bool _sessionTrackingAvailable = true;
 
   AuthStatus get status => _status;
   User? get user => _user;
@@ -132,6 +144,21 @@ class AuthService extends ChangeNotifier {
   Future<void> _signInWith(AuthProvider provider) async {
     _errorMessage = null;
     try {
+      if (kIsWeb) {
+        try {
+          await _auth.signInWithPopup(provider);
+          return;
+        } on FirebaseAuthException catch (e) {
+          final code = e.code.toLowerCase();
+          final shouldFallbackToRedirect =
+              code == 'popup-blocked' ||
+              code == 'popup_closed_by_user' ||
+              code == 'cancelled-popup-request' ||
+              code == 'web-context-cancelled';
+          if (!shouldFallbackToRedirect) rethrow;
+        }
+      }
+
       await _auth.signInWithRedirect(provider);
     } on FirebaseAuthException catch (e) {
       _errorMessage = e.message ?? e.code;
@@ -187,7 +214,7 @@ class AuthService extends ChangeNotifier {
     }
   }
 
-  Future<void> signOut() => _auth.signOut();
+  Future<void> signOut() => _signOutInternal(clearSessionDoc: true);
 
   /// Forces the ID token to refresh so custom claims (e.g. a just-created
   /// workspaceId) propagate immediately instead of waiting for the 1-hour
@@ -201,6 +228,7 @@ class AuthService extends ChangeNotifier {
   Future<void> _onAuthChanged(User? user) async {
     _user = user;
     if (user == null) {
+      _stopSessionTracking();
       _status = AuthStatus.signedOut;
       _workspaceId = null;
       _workspaceRole = null;
@@ -210,6 +238,9 @@ class AuthService extends ChangeNotifier {
 
     _status = AuthStatus.signedInPending;
     notifyListeners();
+
+    final sessionOk = await _registerSession(user);
+    if (!sessionOk || _auth.currentUser?.uid != user.uid) return;
 
     // Force-refresh to pull the freshest custom claims.
     var token = await user.getIdTokenResult(true);
@@ -247,5 +278,336 @@ class AuthService extends ChangeNotifier {
         ? AuthStatus.signedInNoWorkspace
         : AuthStatus.signedInWithWorkspace;
     notifyListeners();
+  }
+
+  Future<bool> _registerSession(User user) async {
+    if (!_sessionTrackingAvailable) return true;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final sessionId = _currentOrStoredSessionId(user.uid);
+    final sessionRef = _sessionRef(user.uid);
+    var conflictDetected = false;
+
+    try {
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(sessionRef);
+        final data = snap.data();
+        final activeSessionId = data?['activeSessionId'] as String?;
+        final status = data?['status'] as String?;
+
+        final hasOtherActiveSession = snap.exists &&
+            status == 'active' &&
+            activeSessionId != null &&
+            activeSessionId.isNotEmpty &&
+            activeSessionId != sessionId;
+        if (hasOtherActiveSession) {
+          conflictDetected = true;
+          tx.set(sessionRef, {
+            'uid': user.uid,
+            'email': user.email,
+            'status': 'conflict',
+            'activeSessionId': null,
+            'conflictSessionIds': [activeSessionId, sessionId],
+            'conflictDetectedAt': now,
+            'lastSeenAt': now,
+            'updatedAt': now,
+            'metadata': _buildSessionMetadata(user),
+          }, SetOptions(merge: true));
+          return;
+        }
+
+        _sessionId = sessionId;
+        _persistSessionId(user.uid, sessionId);
+        tx.set(sessionRef, {
+          'uid': user.uid,
+          'email': user.email,
+          'status': 'active',
+          'activeSessionId': sessionId,
+          'signedInAt': now,
+          'lastSeenAt': now,
+          'updatedAt': now,
+          'metadata': _buildSessionMetadata(user),
+        }, SetOptions(merge: true));
+      });
+    } on FirebaseException catch (e) {
+      if (_isSessionPermissionError(e)) {
+        _disableSessionTracking(
+          'Session tracking is disabled until Firestore rules allow '
+          'access to userSessions/{uid}.',
+        );
+        return true;
+      }
+      rethrow;
+    }
+
+    if (conflictDetected) {
+      _errorMessage =
+          'This account was signed in twice, so both sessions were signed out.';
+      notifyListeners();
+      await _signOutInternal(
+        clearSessionDoc: false,
+        clearConflictDoc: true,
+      );
+      return false;
+    }
+
+    _errorMessage = null;
+    await _startSessionListener(user);
+    _startSessionHeartbeat(user.uid, sessionId);
+    return true;
+  }
+
+  Future<void> _startSessionListener(User user) async {
+    await _sessionSub?.cancel();
+    _sessionSub = _sessionRef(user.uid).snapshots().listen(
+      (snap) {
+        final sessionId = _sessionId;
+        if (sessionId == null) return;
+        if (!snap.exists) return;
+        final data = snap.data();
+        if (data == null) return;
+        final status = data['status'] as String?;
+        final activeSessionId = data['activeSessionId'] as String?;
+        final conflictSessionIds =
+            (data['conflictSessionIds'] as List?)
+                ?.map((v) => v?.toString() ?? '')
+                .where((v) => v.isNotEmpty)
+                .toSet() ??
+            const <String>{};
+        final isConflict = status == 'conflict';
+        final superseded = status == 'active' &&
+            activeSessionId != null &&
+            activeSessionId.isNotEmpty &&
+            activeSessionId != sessionId;
+        final targetedByConflict =
+            isConflict && conflictSessionIds.contains(sessionId);
+        if (!targetedByConflict && !superseded) return;
+
+        unawaited(
+          _forceSignOut(
+            'This account was signed in in another window or device. '
+            'For safety, both sessions were signed out.',
+            clearConflictDoc: targetedByConflict,
+          ),
+        );
+      },
+      onError: (Object error) {
+        if (error is FirebaseException && _isSessionPermissionError(error)) {
+          _disableSessionTracking(
+            'Session tracking is disabled until Firestore rules allow '
+            'access to userSessions/{uid}.',
+          );
+          return;
+        }
+        debugPrint('[auth] session listener failed: $error');
+      },
+    );
+  }
+
+  void _startSessionHeartbeat(String uid, String sessionId) {
+    _sessionHeartbeat?.cancel();
+    _sessionHeartbeat = Timer.periodic(
+      const Duration(seconds: 30),
+      (_) => unawaited(_touchSession(uid, sessionId)),
+    );
+  }
+
+  Future<void> _touchSession(String uid, String sessionId) async {
+    if (!_sessionTrackingAvailable) return;
+    final user = _auth.currentUser;
+    if (user == null || user.uid != uid || _sessionId != sessionId) return;
+
+    final now = DateTime.now().millisecondsSinceEpoch;
+    try {
+      await _sessionRef(uid).set({
+        'uid': uid,
+        'email': user.email,
+        'status': 'active',
+        'activeSessionId': sessionId,
+        'lastSeenAt': now,
+        'updatedAt': now,
+      }, SetOptions(merge: true));
+    } catch (e) {
+      if (e is FirebaseException && _isSessionPermissionError(e)) {
+        _disableSessionTracking(
+          'Session tracking is disabled until Firestore rules allow '
+          'access to userSessions/{uid}.',
+        );
+        return;
+      }
+      debugPrint('[auth] session heartbeat failed: $e');
+    }
+  }
+
+  Future<void> _forceSignOut(
+    String message, {
+    bool clearConflictDoc = false,
+  }) async {
+    if (_handlingForcedSignOut) return;
+    _handlingForcedSignOut = true;
+    _errorMessage = message;
+    notifyListeners();
+    try {
+      await _signOutInternal(
+        clearSessionDoc: false,
+        clearConflictDoc: clearConflictDoc,
+      );
+    } finally {
+      _handlingForcedSignOut = false;
+    }
+  }
+
+  Future<void> _signOutInternal({
+    required bool clearSessionDoc,
+    bool clearConflictDoc = false,
+  }) async {
+    final uid = _auth.currentUser?.uid;
+    final sessionId = _sessionId;
+
+    _sessionHeartbeat?.cancel();
+    _sessionHeartbeat = null;
+    await _sessionSub?.cancel();
+    _sessionSub = null;
+
+    if (clearSessionDoc && uid != null && sessionId != null) {
+      await _clearSessionDoc(uid, sessionId);
+    }
+    if (clearConflictDoc && uid != null && sessionId != null) {
+      await _clearConflictDoc(uid, sessionId);
+    }
+
+    if (uid != null) {
+      _clearStoredSessionId(uid);
+    }
+
+    await _auth.signOut();
+  }
+
+  Future<void> _clearSessionDoc(String uid, String sessionId) async {
+    final ref = _sessionRef(uid);
+    try {
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        final data = snap.data();
+        if (!snap.exists || data == null) return;
+        if (data['status'] != 'active') return;
+        if (data['activeSessionId'] != sessionId) return;
+        tx.delete(ref);
+      });
+    } catch (e) {
+      debugPrint('[auth] failed to clear session doc: $e');
+    }
+  }
+
+  Future<void> _clearConflictDoc(String uid, String sessionId) async {
+    final ref = _sessionRef(uid);
+    try {
+      await _firestore.runTransaction((tx) async {
+        final snap = await tx.get(ref);
+        final data = snap.data();
+        if (!snap.exists || data == null) return;
+        if (data['status'] != 'conflict') return;
+        final ids = (data['conflictSessionIds'] as List?)
+                ?.map((v) => v?.toString() ?? '')
+                .where((v) => v.isNotEmpty)
+                .toSet() ??
+            const <String>{};
+        if (!ids.contains(sessionId)) return;
+        tx.delete(ref);
+      });
+    } catch (e) {
+      debugPrint('[auth] failed to clear conflict doc: $e');
+    }
+  }
+
+  void _stopSessionTracking() {
+    _sessionHeartbeat?.cancel();
+    _sessionHeartbeat = null;
+    unawaited(_sessionSub?.cancel());
+    _sessionSub = null;
+    _sessionId = null;
+  }
+
+  DocumentReference<Map<String, dynamic>> _sessionRef(String uid) =>
+      _firestore.collection(_sessionCollection).doc(uid);
+
+  String _nextSessionId() {
+    _sessionCounter += 1;
+    return '${DateTime.now().microsecondsSinceEpoch}_$_sessionCounter';
+  }
+
+  String _currentOrStoredSessionId(String uid) {
+    final current = _sessionId;
+    if (current != null && current.isNotEmpty) return current;
+    if (!kIsWeb) return _nextSessionId();
+
+    final key = _sessionStorageKey(uid);
+    final existing = web.window.sessionStorage.getItem(key);
+    if (existing != null && existing.isNotEmpty) {
+      _sessionId = existing;
+      return existing;
+    }
+
+    final created = _nextSessionId();
+    web.window.sessionStorage.setItem(key, created);
+    _sessionId = created;
+    return created;
+  }
+
+  void _persistSessionId(String uid, String sessionId) {
+    if (!kIsWeb) return;
+    web.window.sessionStorage.setItem(_sessionStorageKey(uid), sessionId);
+  }
+
+  void _clearStoredSessionId(String uid) {
+    if (!kIsWeb) return;
+    web.window.sessionStorage.removeItem(_sessionStorageKey(uid));
+  }
+
+  String _sessionStorageKey(String uid) => 'avokaido.userSession.$uid';
+
+  bool _isSessionPermissionError(FirebaseException e) =>
+      e.plugin == 'cloud_firestore' && e.code == 'permission-denied';
+
+  void _disableSessionTracking(String message) {
+    _sessionTrackingAvailable = false;
+    _sessionHeartbeat?.cancel();
+    _sessionHeartbeat = null;
+    unawaited(_sessionSub?.cancel());
+    _sessionSub = null;
+    _sessionId = null;
+    _errorMessage = message;
+    notifyListeners();
+  }
+
+  Map<String, dynamic> _buildSessionMetadata(User user) {
+    final providers = user.providerData
+        .map((p) => p.providerId)
+        .where((p) => p.isNotEmpty)
+        .toList(growable: false);
+
+    return {
+      'email': user.email,
+      'displayName': user.displayName,
+      'providers': providers,
+      'isAnonymous': user.isAnonymous,
+      'creationTime': user.metadata.creationTime?.toIso8601String(),
+      'lastSignInTime': user.metadata.lastSignInTime?.toIso8601String(),
+      'timeZone': DateTime.now().timeZoneName,
+      'timeZoneOffsetMinutes': DateTime.now().timeZoneOffset.inMinutes,
+      if (kIsWeb) ...{
+        'userAgent': web.window.navigator.userAgent,
+        'language': web.window.navigator.language,
+        'platform': web.window.navigator.platform,
+        'host': web.window.location.host,
+        'path': web.window.location.pathname,
+      },
+    };
+  }
+
+  @override
+  void dispose() {
+    _stopSessionTracking();
+    super.dispose();
   }
 }

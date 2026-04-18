@@ -21,8 +21,15 @@ class SignInScreen extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            _TopBar(onSignInPressed: () => _scrollToSignIn(context)),
-            const _Hero(),
+            _TopBar(
+              auth: auth,
+              onPrimaryPressed: () => _handlePrimaryAction(context),
+              onSignInPressed: () => _handlePrimaryAction(context),
+            ),
+            _Hero(
+              auth: auth,
+              onPrimaryPressed: () => _handlePrimaryAction(context),
+            ),
             const PitchSolution(),
             const PitchSegments(),
             const PitchPricing(),
@@ -43,6 +50,14 @@ class SignInScreen extends StatelessWidget {
     );
   }
 
+  void _handlePrimaryAction(BuildContext context) {
+    if (auth.user != null && auth.status == AuthStatus.signedInWithWorkspace) {
+      context.go(auth.isOrgAdmin ? '/workspace/costs' : '/workspace/download');
+      return;
+    }
+    _scrollToSignIn(context);
+  }
+
   static final _signInKey = GlobalKey();
 }
 
@@ -51,11 +66,20 @@ class SignInScreen extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _TopBar extends StatelessWidget {
-  const _TopBar({required this.onSignInPressed});
-  final VoidCallback onSignInPressed;
+  const _TopBar({
+    required this.auth,
+    this.onPrimaryPressed,
+    this.onSignInPressed,
+  });
+  final AuthService auth;
+  final VoidCallback? onPrimaryPressed;
+  final VoidCallback? onSignInPressed;
 
   @override
   Widget build(BuildContext context) {
+    final signedInWithWorkspace =
+        auth.user != null && auth.status == AuthStatus.signedInWithWorkspace;
+    final primaryAction = onPrimaryPressed ?? onSignInPressed;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 20),
       child: Row(
@@ -89,13 +113,13 @@ class _TopBar extends StatelessWidget {
           ),
           const SizedBox(width: 8),
           FilledButton(
-            onPressed: onSignInPressed,
+            onPressed: primaryAction,
             style: FilledButton.styleFrom(
               backgroundColor: Brand.green,
               padding:
                   const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
-            child: const Text('Sign in'),
+            child: Text(signedInWithWorkspace ? 'Open portal' : 'Sign in'),
           ),
         ],
       ),
@@ -108,10 +132,17 @@ class _TopBar extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _Hero extends StatelessWidget {
-  const _Hero();
+  const _Hero({
+    required this.auth,
+    required this.onPrimaryPressed,
+  });
+  final AuthService auth;
+  final VoidCallback onPrimaryPressed;
 
   @override
   Widget build(BuildContext context) {
+    final signedInWithWorkspace =
+        auth.user != null && auth.status == AuthStatus.signedInWithWorkspace;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 64),
       child: Center(
@@ -149,13 +180,18 @@ class _Hero extends StatelessWidget {
                 alignment: WrapAlignment.center,
                 children: [
                   FilledButton.icon(
-                    onPressed: () => Scrollable.ensureVisible(
-                      SignInScreen._signInKey.currentContext ?? context,
-                      duration: const Duration(milliseconds: 400),
-                      curve: Curves.easeOutCubic,
+                    onPressed: onPrimaryPressed,
+                    icon: Icon(
+                      signedInWithWorkspace
+                          ? Icons.dashboard_outlined
+                          : Icons.rocket_launch_outlined,
+                      size: 18,
                     ),
-                    icon: const Icon(Icons.rocket_launch_outlined, size: 18),
-                    label: const Text('Create your workspace'),
+                    label: Text(
+                      signedInWithWorkspace
+                          ? 'Back to your portal'
+                          : 'Create your workspace',
+                    ),
                     style: FilledButton.styleFrom(
                       backgroundColor: Brand.green,
                       padding: const EdgeInsets.symmetric(
@@ -510,7 +546,7 @@ class _SignInCardState extends State<_SignInCard> {
         ),
         const SizedBox(height: 6),
         const Text(
-          'Use your existing account — we never ask for passwords.',
+          'Use your existing account, or fall back to email and password.',
           textAlign: TextAlign.center,
           style: TextStyle(fontSize: 13, color: Colors.black54),
         ),

@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
+import 'package:web/web.dart' as web;
 
 import '../auth/auth_service.dart';
 
@@ -92,6 +93,7 @@ class _AvailableReleases extends StatelessWidget {
             version: d.data()['version'] as String? ?? '',
             releasedAt: (d.data()['releasedAt'] as num?)?.toInt(),
             notes: d.data()['notes'] as String?,
+            downloadUrl: d.data()['downloadUrl'] as String? ?? '',
           ),
       ],
     );
@@ -104,12 +106,14 @@ class _ReleaseCard extends StatelessWidget {
     required this.version,
     required this.releasedAt,
     required this.notes,
+    required this.downloadUrl,
   });
 
   final String platform;
   final String version;
   final int? releasedAt;
   final String? notes;
+  final String downloadUrl;
 
   String get _label => switch (platform) {
         'macos' => 'macOS',
@@ -175,6 +179,17 @@ class _ReleaseCard extends StatelessWidget {
                   style: const TextStyle(fontSize: 12),
                 ),
               ],
+              const SizedBox(height: 12),
+              FilledButton.icon(
+                onPressed: downloadUrl.isEmpty
+                    ? null
+                    : () => web.window.location.href = downloadUrl,
+                icon: const Icon(Icons.download, size: 16),
+                label: const Text('Download'),
+                style: FilledButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                ),
+              ),
             ],
           ),
         ),

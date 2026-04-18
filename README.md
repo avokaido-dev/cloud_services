@@ -7,7 +7,7 @@ Separate from `avokaido_admin` (which is the internal @avokaido.com system-admin
 ## Flow
 
 1. Anyone lands at `/` → redirected to `/signin` if signed out.
-2. Sign in with **GitHub**, **Microsoft**, or **Apple** (OAuth via Firebase Auth).
+2. Sign in with **GitHub**, **Google**, **Microsoft**, or **Apple** (OAuth via Firebase Auth).
 3. First-time users have no `workspaceId` claim → redirected to `/create-workspace` → enter a name → calls `createWorkspace` cloud function → they become the org admin of the new workspace.
 4. Subsequent visits land directly in `/workspace/overview` with tabs:
    - **Overview** — workspace info + downloads (reads `releases/{platform}` to expose the desktop app).
@@ -18,16 +18,19 @@ Invited users land on `/invite/{token}`, which attempts the `avokaido://claim?to
 
 ## One-time Firebase console setup
 
-Three OAuth providers must be enabled before sign-in works:
+Four OAuth providers can be enabled for sign-in:
 
 1. Open https://console.firebase.google.com/project/avokaido-de9e1/authentication/providers.
 2. Enable **GitHub**:
    - Register an OAuth app at https://github.com/settings/developers → callback URL is the one Firebase shows (ends in `/__/auth/handler`).
    - Paste Client ID + Secret back into Firebase.
-3. Enable **Microsoft**:
+3. Enable **Google**:
+   - Usually just needs to be toggled on in Firebase Authentication → Sign-in method.
+   - Make sure your local/dev host (for example `localhost`) is listed under Authorized domains.
+4. Enable **Microsoft**:
    - Register an app at https://portal.azure.com → App registrations → New registration. Redirect URI = the Firebase handler URL.
    - Paste Application (client) ID + a client secret you generate.
-4. Enable **Apple**:
+5. Enable **Apple**:
    - Requires an Apple Developer account + Services ID + Sign in with Apple domain verification. Firebase docs: https://firebase.google.com/docs/auth/web/apple.
 
 ## Deploy

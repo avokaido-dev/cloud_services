@@ -76,7 +76,7 @@ class _AvokaidoAppState extends State<AvokaidoApp> {
         case AuthStatus.signedInWithWorkspace:
           final home =
               widget.auth.isOrgAdmin ? _adminHome : _memberHome;
-          if (loc == '/signin' || loc == '/create-workspace') {
+          if (loc == '/create-workspace') {
             return home;
           }
           // Members can't reach admin-only screens.
