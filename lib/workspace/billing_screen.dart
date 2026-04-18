@@ -161,11 +161,376 @@ class _BillingScreenState extends State<BillingScreen> {
           ),
           const SizedBox(height: 24),
           const Text(
+            'Monthly budget',
+            style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
+          ),
+          const SizedBox(height: 8),
+          _BudgetSection(
+            workspaceId: wsId,
+            onError: (msg) => setState(() => _error = msg),
+            onNotice: (msg) => setState(() => _notice = msg),
+          ),
+          const SizedBox(height: 24),
+          const Text(
             'Invoices',
             style: TextStyle(fontSize: 16, fontWeight: FontWeight.w600),
           ),
           const SizedBox(height: 8),
           _InvoicesList(workspaceId: wsId),
+        ],
+      ),
+    );
+  }
+}
+
+class _BudgetSection extends StatefulWidget {
+  const _BudgetSection({
+    required this.workspaceId,
+    required this.onError,
+    required this.onNotice,
+  });
+  final String workspaceId;
+  final void Function(String) onError;
+  final void Function(String) onNotice;
+
+  @override
+  State<_BudgetSection> createState() => _BudgetSectionState();
+}
+
+class _BudgetSectionState extends State<_BudgetSection> {
+  final _capController = TextEditingController();
+  bool _hardStop = true;
+  bool _saving = false;
+  bool _resetting = false;
+  bool _hydrated = false;
+
+  @override
+  void dispose() {
+    _capController.dispose();
+    super.dispose();
+  }
+
+  String _monthKey(DateTime d) {
+    final u = d.toUtc();
+    return '${u.year.toString().padLeft(4, '0')}-${u.month.toString().padLeft(2, '0')}';
+  }
+
+  Future<void> _save() async {
+    final text = _capController.text.trim();
+    final usd = text.isEmpty ? 0.0 : double.tryParse(text);
+    if (usd == null || usd < 0) {
+      widget.onError('Enter a non-negative USD amount, or 0 to disable.');
+      return;
+    }
+    setState(() => _saving = true);
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('saveBillingBudget')
+          .call<Map<String, dynamic>>({
+        'workspaceId': widget.workspaceId,
+        'monthlyCapCents': (usd * 100).round(),
+        'hardStop': _hardStop,
+      });
+      widget.onNotice('Budget saved.');
+    } on FirebaseFunctionsException catch (e) {
+      widget.onError(e.message ?? 'Could not save budget.');
+    } catch (e) {
+      widget.onError(e.toString());
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _resetCap() async {
+    setState(() => _resetting = true);
+    try {
+      await FirebaseFunctions.instance
+          .httpsCallable('resetBillingCap')
+          .call<Map<String, dynamic>>({'workspaceId': widget.workspaceId});
+      widget.onNotice('Cap cleared — AI calls resumed.');
+    } on FirebaseFunctionsException catch (e) {
+      widget.onError(e.message ?? 'Could not reset cap.');
+    } catch (e) {
+      widget.onError(e.toString());
+    } finally {
+      if (mounted) setState(() => _resetting = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final billingStream = FirebaseFirestore.instance
+        .doc('workspaces/${widget.workspaceId}/billing/stripe')
+        .snapshots();
+    final rollupStream = FirebaseFirestore.instance
+        .doc('workspaces/${widget.workspaceId}/billingRollup/'
+            '${_monthKey(DateTime.now())}')
+        .snapshots();
+    final alertsStream = FirebaseFirestore.instance
+        .collection('workspaces/${widget.workspaceId}/billingAlerts')
+        .orderBy('createdAt', descending: true)
+        .limit(6)
+        .snapshots();
+
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: billingStream,
+      builder: (context, bSnap) {
+        final billing = bSnap.data?.data() ?? const {};
+        final capCents = (billing['monthlyCapCents'] as num?)?.toInt() ?? 0;
+        final hardStop = billing['hardStop'] as bool? ?? true;
+        final capReached = billing['capReached'] as bool? ?? false;
+
+        if (!_hydrated && bSnap.hasData) {
+          _hydrated = true;
+          _capController.text =
+              capCents > 0 ? (capCents / 100).toStringAsFixed(2) : '';
+          _hardStop = hardStop;
+        }
+
+        return Container(
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Colors.white,
+            border: Border.all(color: Colors.black.withAlpha(20)),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (capReached)
+                Container(
+                  margin: const EdgeInsets.only(bottom: 14),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFEBEE),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFE57373)),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.block, color: Color(0xFFB71C1C)),
+                      const SizedBox(width: 10),
+                      const Expanded(
+                        child: Text(
+                          'Monthly cap reached — further AI calls are paused.',
+                          style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w600,
+                              color: Color(0xFFB71C1C)),
+                        ),
+                      ),
+                      FilledButton(
+                        onPressed: _resetting ? null : _resetCap,
+                        style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFFB71C1C)),
+                        child: _resetting
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white))
+                            : const Text('Resume'),
+                      ),
+                    ],
+                  ),
+                ),
+              StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+                stream: rollupStream,
+                builder: (context, rSnap) {
+                  final rollup = rSnap.data?.data() ?? const {};
+                  final costCents = (rollup['costCents'] as num?)?.toInt() ?? 0;
+                  return _BudgetProgress(
+                    costCents: costCents,
+                    capCents: capCents,
+                  );
+                },
+              ),
+              const SizedBox(height: 16),
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Expanded(
+                    child: TextField(
+                      controller: _capController,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      decoration: const InputDecoration(
+                        labelText: 'Monthly cap (USD)',
+                        hintText: 'e.g. 500.00 — leave empty or 0 to disable',
+                        border: OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text('Enforce cap',
+                          style: TextStyle(fontSize: 12, color: Colors.black54)),
+                      const SizedBox(height: 4),
+                      Switch(
+                        value: _hardStop,
+                        onChanged: (v) => setState(() => _hardStop = v),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              Text(
+                _hardStop
+                    ? 'When enabled: AI calls are paused at 100% until the cap is raised.'
+                    : 'Alerts only — calls continue past 100%.',
+                style: const TextStyle(fontSize: 12, color: Colors.black54),
+              ),
+              const SizedBox(height: 12),
+              Align(
+                alignment: Alignment.centerRight,
+                child: FilledButton.icon(
+                  onPressed: _saving ? null : _save,
+                  icon: _saving
+                      ? const SizedBox(
+                          width: 14,
+                          height: 14,
+                          child: CircularProgressIndicator(strokeWidth: 2))
+                      : const Icon(Icons.save_outlined),
+                  label: const Text('Save budget'),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const Divider(height: 1),
+              const SizedBox(height: 14),
+              const Text(
+                'Recent alerts',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 6),
+              StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+                stream: alertsStream,
+                builder: (context, aSnap) {
+                  final docs = aSnap.data?.docs ?? const [];
+                  if (docs.isEmpty) {
+                    return const Padding(
+                      padding: EdgeInsets.symmetric(vertical: 4),
+                      child: Text(
+                        'No alerts yet. Thresholds fire at 50%, 80%, and 100%.',
+                        style:
+                            TextStyle(fontSize: 12, color: Colors.black54),
+                      ),
+                    );
+                  }
+                  return Column(
+                    children: [
+                      for (final d in docs) _AlertRow(data: d.data()),
+                    ],
+                  );
+                },
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _BudgetProgress extends StatelessWidget {
+  const _BudgetProgress({required this.costCents, required this.capCents});
+  final int costCents;
+  final int capCents;
+
+  @override
+  Widget build(BuildContext context) {
+    final spendUsd = costCents / 100;
+    if (capCents <= 0) {
+      return Text(
+        'Month-to-date: \$${spendUsd.toStringAsFixed(2)} — no cap set.',
+        style: const TextStyle(fontSize: 13),
+      );
+    }
+    final capUsd = capCents / 100;
+    final pct = (costCents / capCents).clamp(0.0, 1.2);
+    Color color;
+    if (pct >= 1.0) {
+      color = const Color(0xFFB71C1C);
+    } else if (pct >= 0.8) {
+      color = const Color(0xFFE65100);
+    } else if (pct >= 0.5) {
+      color = const Color(0xFFB26A00);
+    } else {
+      color = const Color(0xFF2E7D32);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Text(
+              '\$${spendUsd.toStringAsFixed(2)}',
+              style: TextStyle(
+                  fontSize: 18, fontWeight: FontWeight.w700, color: color),
+            ),
+            const SizedBox(width: 6),
+            Text(
+              '/ \$${capUsd.toStringAsFixed(2)}  ·  ${(pct * 100).toStringAsFixed(0)}%',
+              style: const TextStyle(fontSize: 13, color: Colors.black54),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        ClipRRect(
+          borderRadius: BorderRadius.circular(6),
+          child: LinearProgressIndicator(
+            value: pct.clamp(0.0, 1.0),
+            minHeight: 8,
+            backgroundColor: Colors.grey.shade200,
+            valueColor: AlwaysStoppedAnimation(color),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _AlertRow extends StatelessWidget {
+  const _AlertRow({required this.data});
+  final Map<String, dynamic> data;
+
+  @override
+  Widget build(BuildContext context) {
+    final pct = data['pct'] as num?;
+    final level = data['level'] as String? ?? 'info';
+    final month = data['month'] as String? ?? '';
+    final costCents = (data['costCents'] as num?)?.toInt() ?? 0;
+    final capCents = (data['capCents'] as num?)?.toInt() ?? 0;
+    final ts = (data['createdAt'] as Timestamp?)?.toDate().toLocal();
+    final color = switch (level) {
+      'blocked' => const Color(0xFFB71C1C),
+      'critical' => const Color(0xFFE65100),
+      'warning' => const Color(0xFFB26A00),
+      _ => Colors.black54,
+    };
+    final amount =
+        '\$${(costCents / 100).toStringAsFixed(2)} / \$${(capCents / 100).toStringAsFixed(2)}';
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(Icons.notifications_active_outlined, size: 14, color: color),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$month · ${pct ?? '?'}% · $amount',
+              style: const TextStyle(fontSize: 12.5),
+            ),
+          ),
+          if (ts != null)
+            Text(
+              '${ts.year}-${ts.month.toString().padLeft(2, '0')}-${ts.day.toString().padLeft(2, '0')}',
+              style: const TextStyle(fontSize: 11, color: Colors.black45),
+            ),
         ],
       ),
     );
