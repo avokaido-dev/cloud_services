@@ -149,7 +149,7 @@ class AuthService extends ChangeNotifier {
   }
 
   Future<void> _signInWith(AuthProvider provider) async {
-    _errorMessage = null;
+    clearError();
     try {
       if (kIsWeb) {
         try {
@@ -489,21 +489,26 @@ class AuthService extends ChangeNotifier {
     if (uid != null) {
       _clearStoredSessionId(uid);
     }
+    _sessionId = null;
 
     await _auth.signOut();
   }
 
+  // On explicit sign-out we *always* reset the session doc — including from
+  // a prior 'conflict' state — so the next sign-in can't be misread as a
+  // duplicate and trigger the "signed in twice" banner.
   Future<void> _clearSessionDoc(String uid, String sessionId) async {
     final ref = _sessionRef(uid);
+    final now = DateTime.now().millisecondsSinceEpoch;
     try {
-      await _firestore.runTransaction((tx) async {
-        final snap = await tx.get(ref);
-        final data = snap.data();
-        if (!snap.exists || data == null) return;
-        if (data['status'] != 'active') return;
-        if (data['activeSessionId'] != sessionId) return;
-        tx.delete(ref);
-      });
+      await ref.set({
+        'uid': uid,
+        'status': 'signedOut',
+        'activeSessionId': null,
+        'conflictSessionIds': <String>[],
+        'signedOutAt': now,
+        'updatedAt': now,
+      }, SetOptions(merge: true));
     } catch (e) {
       debugPrint('[auth] failed to clear session doc: $e');
     }
