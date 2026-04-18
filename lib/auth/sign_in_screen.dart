@@ -26,7 +26,7 @@ class SignInScreen extends StatelessWidget {
             const PitchProblem(),
             const PitchProcessToday(),
             const PitchProcessWithAvokaido(),
-            const PitchLovableBridge(),
+            const PitchBuildersBridge(),
             const PitchSolution(),
             const PitchSegments(),
             const PitchPricing(),
@@ -115,7 +115,7 @@ class _Hero extends StatelessWidget {
           child: Column(
             children: [
               const Text(
-                'Lovable speed.\nEnterprise control.',
+                'Builder speed.\nEnterprise control.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 56,
@@ -127,9 +127,9 @@ class _Hero extends StatelessWidget {
               const SizedBox(height: 24),
               const Text(
                 'Avokaido is the AI development platform for teams that need '
-                'speed without losing control. Build with Lovable, operate '
-                'with us — we add the security, compliance, and quality '
-                'gates enterprises demand.',
+                'speed without losing control. Build with any AI app builder, '
+                'operate with us — we add the security, compliance, and '
+                'quality gates enterprises demand.',
                 textAlign: TextAlign.center,
                 style: TextStyle(
                   fontSize: 18,

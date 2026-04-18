@@ -22,7 +22,7 @@ class InvestorsScreen extends StatelessWidget {
             PitchProblem(),
             PitchProcessToday(),
             PitchProcessWithAvokaido(),
-            PitchLovableBridge(),
+            PitchBuildersBridge(),
             PitchSolution(),
             PitchSegments(),
             PitchPricing(),
@@ -97,7 +97,7 @@ class _InvestorHero extends StatelessWidget {
           const PitchEyebrow('Investor pitch'),
           const SizedBox(height: 16),
           const PitchHeadline(
-            'Avokaido — Lovable,\nbuilt for enterprise.',
+            'Avokaido — consumer speed,\nenterprise control.',
           ),
           const SizedBox(height: 20),
           ConstrainedBox(

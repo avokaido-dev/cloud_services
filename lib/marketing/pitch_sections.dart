@@ -136,7 +136,7 @@ class PitchProblem extends StatelessWidget {
                   icon: Icons.shield_outlined,
                   title: 'Security gaps',
                   body:
-                      'Consumer AI tools like Lovable and v0 lack enterprise '
+                      'Consumer AI app builders ship fast but lack enterprise '
                       'security, compliance, and data governance.',
                 ),
                 _ProblemCard(
@@ -471,12 +471,12 @@ class _CalloutBar extends StatelessWidget {
 }
 
 // ---------------------------------------------------------------------------
-// Lovable bridge — positioning as the enterprise-ready operator on top of
+// Builder bridge — positioning as the enterprise-ready operator on top of
 // consumer AI builders.
 // ---------------------------------------------------------------------------
 
-class PitchLovableBridge extends StatelessWidget {
-  const PitchLovableBridge({super.key});
+class PitchBuildersBridge extends StatelessWidget {
+  const PitchBuildersBridge({super.key});
 
   @override
   Widget build(BuildContext context) {
@@ -485,10 +485,10 @@ class PitchLovableBridge extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const PitchEyebrow('Build with Lovable, operate with Avokaido'),
+          const PitchEyebrow('Build fast, operate with Avokaido'),
           const SizedBox(height: 16),
           const PitchHeadline(
-              "We don't replace Lovable.\nWe make it enterprise-ready."),
+              "We don't replace your AI builder.\nWe make it enterprise-ready."),
           const SizedBox(height: 32),
           LayoutBuilder(builder: (context, c) {
             final wide = c.maxWidth > 900;
@@ -496,10 +496,10 @@ class PitchLovableBridge extends StatelessWidget {
               _BridgeCard(
                 number: '1',
                 numberColor: Brand.accent,
-                title: 'Build in Lovable',
+                title: 'Prototype fast',
                 body:
-                    'Users prototype with Lovable\'s AI builder. Natural '
-                    'language to working code, fast.',
+                    'Teams prototype with the AI app builder of their '
+                    'choice. Natural language to working code, fast.',
                 footer: 'Exports code to GitHub →',
               ),
               _BridgeCard(
@@ -551,7 +551,7 @@ class PitchLovableBridge extends StatelessWidget {
           _CalloutBar(
             color: const Color(0xFF9BD3A6),
             text:
-                'Lovable for speed.  Avokaido for control.  GitHub as the bridge.',
+                'AI builders for speed.  Avokaido for control.  GitHub as the bridge.',
           ),
         ],
       ),
@@ -644,7 +644,7 @@ class PitchSolution extends StatelessWidget {
           const PitchEyebrow('The solution', color: Brand.green),
           const SizedBox(height: 16),
           const PitchHeadline(
-            'Lovable, but built for enterprise.',
+            'Consumer-speed building, enterprise-grade operation.',
             color: Colors.white,
           ),
           const SizedBox(height: 12),
@@ -778,10 +778,10 @@ class PitchSegments extends StatelessWidget {
               _SegmentCard(
                 color: Brand.accent,
                 icon: Icons.favorite_border,
-                title: 'Lovable graduates',
-                subtitle: 'Apps built in Lovable',
+                title: 'Prototype graduates',
+                subtitle: 'Apps built with consumer AI tools',
                 bullets: const [
-                  'Export from Lovable → import into Avokaido',
+                  'Export from any AI builder → import into Avokaido',
                   'Add quality control, testing and governance',
                   'Bridge the gap from prototype to production',
                 ],
