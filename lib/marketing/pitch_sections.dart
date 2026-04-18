@@ -531,18 +531,20 @@ class PitchLovableBridge extends StatelessWidget {
                 ],
               ]);
             }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < cards.length; i++) ...[
-                  Expanded(child: cards[i]),
-                  if (i < cards.length - 1)
-                    const Padding(
-                      padding: EdgeInsets.only(top: 40),
-                      child: Icon(Icons.arrow_forward, color: Brand.green),
-                    ),
+            return IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (var i = 0; i < cards.length; i++) ...[
+                    Expanded(child: cards[i]),
+                    if (i < cards.length - 1)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 40),
+                        child: Icon(Icons.arrow_forward, color: Brand.green),
+                      ),
+                  ],
                 ],
-              ],
+              ),
             );
           }),
           const SizedBox(height: 24),
@@ -793,14 +795,16 @@ class PitchSegments extends StatelessWidget {
                 ]
               ]);
             }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final c in cards) ...[
-                  Expanded(child: c),
-                  if (c != cards.last) const SizedBox(width: 20),
+            return IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final c in cards) ...[
+                    Expanded(child: c),
+                    if (c != cards.last) const SizedBox(width: 20),
+                  ],
                 ],
-              ],
+              ),
             );
           }),
         ],
@@ -1093,14 +1097,16 @@ class PitchRoadmap extends StatelessWidget {
                 ],
               ]);
             }
-            return Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (final c in cards) ...[
-                  Expanded(child: c),
-                  if (c != cards.last) const SizedBox(width: 16),
+            return IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final c in cards) ...[
+                    Expanded(child: c),
+                    if (c != cards.last) const SizedBox(width: 16),
+                  ],
                 ],
-              ],
+              ),
             );
           }),
         ],
