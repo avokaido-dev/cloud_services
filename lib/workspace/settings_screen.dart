@@ -330,6 +330,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
         });
 
       final integrations = results[1].data;
+      debugPrint(
+          '[settings] _loadAdminConfig integrations=$integrations');
       final rawRepos = (results[2].data['repos'] as List?) ?? const [];
       final repos = rawRepos
           .map((value) => value?.toString().trim() ?? '')
@@ -365,8 +367,15 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   Future<void> _saveGithubToken() async {
     final wsId = widget.auth.workspaceId;
-    if (wsId == null) return;
+    debugPrint('[settings] _saveGithubToken start wsId=$wsId');
+    if (wsId == null) {
+      debugPrint('[settings] _saveGithubToken abort: wsId is null');
+      return;
+    }
     final token = _githubTokenController.text.trim();
+    debugPrint(
+        '[settings] _saveGithubToken token len=${token.length} prefix='
+        '${token.isEmpty ? "<empty>" : token.substring(0, token.length < 4 ? token.length : 4)}…');
     if (token.isEmpty) {
       setState(() => _error =
           'Paste a GitHub token (ghp_… or github_pat_…) before saving.');
@@ -381,17 +390,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
     await _saveSection(
       'GitHub token saved.',
       () async {
+        debugPrint('[settings] calling saveWorkspaceIntegrationSecrets…');
         final result = await FirebaseFunctions.instance
             .httpsCallable('saveWorkspaceIntegrationSecrets')
             .call<Map<String, dynamic>>({
           'workspaceId': wsId,
           'githubToken': token,
         });
-        _hasGithubToken = result.data['hasGithubToken'] as bool? ?? false;
+        debugPrint(
+            '[settings] saveWorkspaceIntegrationSecrets result=${result.data}');
+        final hasToken = result.data['hasGithubToken'] as bool? ?? false;
+        debugPrint('[settings] parsed hasGithubToken=$hasToken');
+        _hasGithubToken = hasToken;
         _githubTokenController.clear();
       },
       (v) => _savingGithubToken = v,
     );
+    debugPrint(
+        '[settings] _saveGithubToken done. _hasGithubToken=$_hasGithubToken '
+        '_error=$_error _notice=$_notice');
   }
 
   Future<void> _saveLinearApiKey() async {
@@ -1133,6 +1150,8 @@ class _GitHubCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    debugPrint('[settings] _GitHubCard build hasToken=$hasToken '
+        'savingToken=$savingToken loading=$loading');
     final repos = _repos;
     return _SectionCard(
       title: 'GitHub',
