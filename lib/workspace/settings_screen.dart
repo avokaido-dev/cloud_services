@@ -54,14 +54,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
   List<_WorkspaceMemberAccess> _workspaceMembers = const [];
   Map<String, Set<String>> _repoAccessByUser = {};
 
-  // Budgets
-  final _dailyLimitController = TextEditingController();
-  final _monthlyLimitController = TextEditingController();
-  final _perJobLimitController = TextEditingController();
-  final _warningPctController = TextEditingController();
-  bool _hardStop = false;
-  bool _budgetsLocked = false;
-
   // Model defaults
   final Map<String, TextEditingController> _modelDefaultControllers = {
     for (final p in _providers) p.id: TextEditingController(),
@@ -75,12 +67,12 @@ class _SettingsScreenState extends State<SettingsScreen> {
 
   bool _loaded = false;
   bool _savingName = false;
-  bool _savingKeys = false;
+  // ignore: unused_field
+  bool _savingKeys = false; // AI provider keys card is hidden for now.
   bool _savingGithubToken = false;
   bool _savingLinearApiKey = false;
   bool _savingRepoAccess = false;
   bool _importingRepos = false;
-  bool _savingBudgets = false;
   bool _savingModels = false;
   bool _savingRouting = false;
   bool _loadingAdminConfig = false;
@@ -102,10 +94,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     for (final c in _repoControllers) {
       c.dispose();
     }
-    _dailyLimitController.dispose();
-    _monthlyLimitController.dispose();
-    _perJobLimitController.dispose();
-    _warningPctController.dispose();
     for (final c in _modelDefaultControllers.values) {
       c.dispose();
     }
@@ -127,16 +115,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _keyLocked[p.id] = (entry?['locked'] as bool?) ?? false;
     }
 
-    // Budgets
-    final budgets =
-        (settings['budgets'] as Map?)?.cast<String, Object?>() ?? const {};
-    _dailyLimitController.text = _numToString(budgets['dailyLimitUsd']);
-    _monthlyLimitController.text = _numToString(budgets['monthlyLimitUsd']);
-    _perJobLimitController.text = _numToString(budgets['perJobLimitUsd']);
-    _warningPctController.text = _numToString(budgets['warningPct']);
-    _hardStop = (budgets['hardStop'] as bool?) ?? false;
-    _budgetsLocked = (budgets['locked'] as bool?) ?? false;
-
     // Model defaults
     final models =
         (settings['modelDefaults'] as Map?)?.cast<String, Object?>() ??
@@ -153,21 +131,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _defaultProvider = routing['defaultProvider'] as String?;
     _fallbackProvider = routing['fallbackProvider'] as String?;
     _routingLocked = (routing['locked'] as bool?) ?? false;
-  }
-
-  String _numToString(Object? v) {
-    if (v == null) return '';
-    if (v is num) {
-      if (v == v.toInt()) return v.toInt().toString();
-      return v.toString();
-    }
-    return v.toString();
-  }
-
-  double? _parseDouble(String s) {
-    final t = s.trim();
-    if (t.isEmpty) return null;
-    return double.tryParse(t);
   }
 
   DocumentReference<Map<String, dynamic>> _wsRef() {
@@ -211,6 +174,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
     );
   }
 
+  // ignore: unused_element
   Future<void> _saveKeys() async {
     final keys = <String, dynamic>{};
     for (final p in _providers) {
@@ -227,25 +191,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true)),
       (v) => _savingKeys = v,
-    );
-  }
-
-  Future<void> _saveBudgets() async {
-    final payload = <String, Object?>{
-      'dailyLimitUsd': _parseDouble(_dailyLimitController.text),
-      'monthlyLimitUsd': _parseDouble(_monthlyLimitController.text),
-      'perJobLimitUsd': _parseDouble(_perJobLimitController.text),
-      'warningPct': _parseDouble(_warningPctController.text),
-      'hardStop': _hardStop,
-      'locked': _budgetsLocked,
-    };
-    await _saveSection(
-      'Budgets saved.',
-      () => _wsRef().set({
-        'settings': {'budgets': payload},
-        'updatedAt': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true)),
-      (v) => _savingBudgets = v,
     );
   }
 
@@ -619,19 +564,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onSave: _saveName,
               ),
               const SizedBox(height: 20),
-              _ApiKeysCard(
-                providers: _providers,
-                keyControllers: _keyControllers,
-                locked: _keyLocked,
-                canEdit: canEdit,
-                saving: _savingKeys,
-                onLockedChanged: (id, v) =>
-                    setState(() => _keyLocked[id] = v),
-                onClear: (id) =>
-                    setState(() => _keyControllers[id]!.clear()),
-                onSave: _saveKeys,
-              ),
-              const SizedBox(height: 20),
+              // AI provider API keys card hidden for now — controllers + save
+              // path kept intact so we can re-enable without reworking state.
               _GitHubCard(
                 tokenController: _githubTokenController,
                 hasToken: _hasGithubToken,
@@ -667,20 +601,6 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 saving: _savingLinearApiKey,
                 loading: _loadingAdminConfig,
                 onSave: _saveLinearApiKey,
-              ),
-              const SizedBox(height: 20),
-              _BudgetsCard(
-                dailyController: _dailyLimitController,
-                monthlyController: _monthlyLimitController,
-                perJobController: _perJobLimitController,
-                warningController: _warningPctController,
-                hardStop: _hardStop,
-                locked: _budgetsLocked,
-                canEdit: canEdit,
-                saving: _savingBudgets,
-                onHardStopChanged: (v) => setState(() => _hardStop = v),
-                onLockedChanged: (v) => setState(() => _budgetsLocked = v),
-                onSave: _saveBudgets,
               ),
               const SizedBox(height: 20),
               _ModelDefaultsCard(
@@ -875,6 +795,7 @@ class _NameCard extends StatelessWidget {
 // Section: AI provider API keys
 // ---------------------------------------------------------------------------
 
+// ignore: unused_element
 class _ApiKeysCard extends StatelessWidget {
   const _ApiKeysCard({
     required this.providers,
@@ -1586,143 +1507,6 @@ class _MemberRepoAccessRow extends StatelessWidget {
 // Section: budgets
 // ---------------------------------------------------------------------------
 
-class _BudgetsCard extends StatelessWidget {
-  const _BudgetsCard({
-    required this.dailyController,
-    required this.monthlyController,
-    required this.perJobController,
-    required this.warningController,
-    required this.hardStop,
-    required this.locked,
-    required this.canEdit,
-    required this.saving,
-    required this.onHardStopChanged,
-    required this.onLockedChanged,
-    required this.onSave,
-  });
-
-  final TextEditingController dailyController;
-  final TextEditingController monthlyController;
-  final TextEditingController perJobController;
-  final TextEditingController warningController;
-  final bool hardStop;
-  final bool locked;
-  final bool canEdit;
-  final bool saving;
-  final ValueChanged<bool> onHardStopChanged;
-  final ValueChanged<bool> onLockedChanged;
-  final VoidCallback onSave;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasValue = dailyController.text.trim().isNotEmpty ||
-        monthlyController.text.trim().isNotEmpty ||
-        perJobController.text.trim().isNotEmpty ||
-        warningController.text.trim().isNotEmpty ||
-        hardStop;
-    return _SectionCard(
-      title: 'Cost budgets',
-      trailing: _StatusChip(_stateFor(hasValue: hasValue, locked: locked)),
-      subtitle:
-          'Soft and hard spend limits enforced by each member\'s desktop '
-          'app. Leave a field blank for no limit.',
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Expanded(
-                child: _MoneyField(
-                  controller: dailyController,
-                  label: 'Daily limit (USD)',
-                  enabled: canEdit,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MoneyField(
-                  controller: monthlyController,
-                  label: 'Monthly limit (USD)',
-                  enabled: canEdit,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          Row(
-            children: [
-              Expanded(
-                child: _MoneyField(
-                  controller: perJobController,
-                  label: 'Per-job limit (USD)',
-                  enabled: canEdit,
-                ),
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: _MoneyField(
-                  controller: warningController,
-                  label: 'Warning at % of limit',
-                  enabled: canEdit,
-                  suffix: '%',
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 8),
-          SwitchListTile(
-            contentPadding: EdgeInsets.zero,
-            dense: true,
-            value: hardStop,
-            onChanged: canEdit ? onHardStopChanged : null,
-            title: const Text('Hard stop when a limit is hit'),
-            subtitle: const Text(
-              'When off, members see a warning but can continue.',
-              style: TextStyle(fontSize: 11),
-            ),
-          ),
-          _LockCheckbox(
-            locked: locked,
-            enabled: canEdit,
-            onChanged: onLockedChanged,
-          ),
-          if (canEdit)
-            _SaveButton(
-                saving: saving, onSave: onSave, label: 'Save budgets'),
-        ],
-      ),
-    );
-  }
-}
-
-class _MoneyField extends StatelessWidget {
-  const _MoneyField({
-    required this.controller,
-    required this.label,
-    required this.enabled,
-    this.suffix,
-  });
-  final TextEditingController controller;
-  final String label;
-  final bool enabled;
-  final String? suffix;
-
-  @override
-  Widget build(BuildContext context) {
-    return TextField(
-      controller: controller,
-      enabled: enabled,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      decoration: InputDecoration(
-        labelText: label,
-        border: const OutlineInputBorder(),
-        isDense: true,
-        suffixText: suffix,
-      ),
-    );
-  }
-}
-
 class _WorkspaceMemberAccess {
   const _WorkspaceMemberAccess({
     required this.uid,
@@ -1766,6 +1550,33 @@ class _ModelDefaultsCard extends StatelessWidget {
   final ValueChanged<bool> onLockedChanged;
   final VoidCallback onSave;
 
+  static const Map<String, List<String>> _suggestions = {
+    'anthropic': [
+      'claude-opus-4-7',
+      'claude-sonnet-4-6',
+      'claude-haiku-4-5-20251001',
+      'claude-opus-4-20250514',
+      'claude-sonnet-4-20250514',
+      'claude-3-7-sonnet-20250219',
+      'claude-3-5-haiku-20241022',
+    ],
+    'openai': [
+      'gpt-4.1',
+      'gpt-4.1-mini',
+      'gpt-4.1-nano',
+      'gpt-4o',
+      'gpt-4o-mini',
+      'o3',
+      'o3-mini',
+      'o4-mini',
+    ],
+    'gemini': [
+      'gemini-2.5-pro',
+      'gemini-2.5-flash',
+      'gemini-2.0-flash',
+    ],
+  };
+
   @override
   Widget build(BuildContext context) {
     final hasValue = providers
@@ -1774,23 +1585,19 @@ class _ModelDefaultsCard extends StatelessWidget {
       title: 'Model defaults',
       trailing: _StatusChip(_stateFor(hasValue: hasValue, locked: locked)),
       subtitle:
-          'Model id used for each provider, e.g. "claude-sonnet-4-6", '
-          '"gpt-4-turbo", "gemini-1.5-pro".',
+          'Model id used for each provider. Pick a suggested id or type a '
+          'custom one.',
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           for (final p in providers)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: TextField(
-                controller: controllers[p.id],
+              child: _ModelIdField(
+                label: '${p.label} — model id',
+                controller: controllers[p.id]!,
+                suggestions: _suggestions[p.id] ?? const [],
                 enabled: canEdit,
-                decoration: InputDecoration(
-                  labelText: '${p.label} — model id',
-                  border: const OutlineInputBorder(),
-                  isDense: true,
-                ),
-                style: const TextStyle(fontFamily: 'monospace'),
               ),
             ),
           _LockCheckbox(
@@ -1803,6 +1610,60 @@ class _ModelDefaultsCard extends StatelessWidget {
                 saving: saving, onSave: onSave, label: 'Save models'),
         ],
       ),
+    );
+  }
+}
+
+/// Editable dropdown: a text field with a clickable arrow that opens a menu
+/// of known model ids. Typing a custom value is allowed — the menu only
+/// surfaces suggestions, never restricts.
+class _ModelIdField extends StatelessWidget {
+  const _ModelIdField({
+    required this.label,
+    required this.controller,
+    required this.suggestions,
+    required this.enabled,
+  });
+
+  final String label;
+  final TextEditingController controller;
+  final List<String> suggestions;
+  final bool enabled;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      enabled: enabled,
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        isDense: true,
+        suffixIcon: suggestions.isEmpty
+            ? null
+            : PopupMenuButton<String>(
+                tooltip: 'Pick a known model id',
+                enabled: enabled,
+                icon: const Icon(Icons.arrow_drop_down),
+                onSelected: (value) {
+                  controller.text = value;
+                  controller.selection = TextSelection.fromPosition(
+                    TextPosition(offset: value.length),
+                  );
+                },
+                itemBuilder: (_) => [
+                  for (final id in suggestions)
+                    PopupMenuItem(
+                      value: id,
+                      child: Text(
+                        id,
+                        style: const TextStyle(fontFamily: 'monospace'),
+                      ),
+                    ),
+                ],
+              ),
+      ),
+      style: const TextStyle(fontFamily: 'monospace'),
     );
   }
 }

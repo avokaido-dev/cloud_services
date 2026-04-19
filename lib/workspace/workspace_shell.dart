@@ -9,10 +9,10 @@ class WorkspaceShell extends StatelessWidget {
   final AuthService auth;
 
   static const _adminDestinations = [
+    _NavItem('/workspace/releases', Icons.system_update_outlined, 'Releases'),
     _NavItem('/workspace/costs', Icons.payments_outlined, 'Costs'),
     _NavItem('/workspace/billing', Icons.receipt_long_outlined, 'Billing'),
     _NavItem('/workspace/team', Icons.group_outlined, 'Team'),
-    _NavItem('/workspace/releases', Icons.system_update_outlined, 'Releases'),
     _NavItem('/workspace/settings', Icons.settings_outlined, 'Settings'),
   ];
 

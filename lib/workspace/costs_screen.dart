@@ -68,6 +68,10 @@ class _CostsScreenState extends State<CostsScreen> {
             ],
           ),
           const SizedBox(height: 16),
+          if (widget.auth.isOrgAdmin) ...[
+            _BudgetsSection(workspaceId: wsId),
+            const SizedBox(height: 16),
+          ],
           StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
             stream: stream,
             builder: (context, snap) {
@@ -616,6 +620,245 @@ class _ErrorCard extends StatelessWidget {
             ),
           ],
         ),
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cost budgets — admin-writable soft/hard limits stored at
+// workspaces/{wsId}.settings.budgets and enforced client-side by every
+// member's desktop app. Lives on the Costs screen so budgets sit next to the
+// spend they gate.
+// ---------------------------------------------------------------------------
+
+class _BudgetsSection extends StatefulWidget {
+  const _BudgetsSection({required this.workspaceId});
+  final String workspaceId;
+
+  @override
+  State<_BudgetsSection> createState() => _BudgetsSectionState();
+}
+
+class _BudgetsSectionState extends State<_BudgetsSection> {
+  final _dailyController = TextEditingController();
+  final _monthlyController = TextEditingController();
+  final _perJobController = TextEditingController();
+  final _warningController = TextEditingController();
+  bool _hardStop = false;
+  bool _locked = false;
+  bool _loaded = false;
+  bool _saving = false;
+  String? _error;
+  String? _notice;
+
+  @override
+  void dispose() {
+    _dailyController.dispose();
+    _monthlyController.dispose();
+    _perJobController.dispose();
+    _warningController.dispose();
+    super.dispose();
+  }
+
+  DocumentReference<Map<String, dynamic>> get _ref => FirebaseFirestore.instance
+      .collection('workspaces')
+      .doc(widget.workspaceId);
+
+  void _syncFromDoc(Map<String, dynamic> data) {
+    final settings =
+        (data['settings'] as Map?)?.cast<String, Object?>() ?? const {};
+    final budgets =
+        (settings['budgets'] as Map?)?.cast<String, Object?>() ?? const {};
+    _dailyController.text = _numToString(budgets['dailyLimitUsd']);
+    _monthlyController.text = _numToString(budgets['monthlyLimitUsd']);
+    _perJobController.text = _numToString(budgets['perJobLimitUsd']);
+    _warningController.text = _numToString(budgets['warningPct']);
+    _hardStop = (budgets['hardStop'] as bool?) ?? false;
+    _locked = (budgets['locked'] as bool?) ?? false;
+  }
+
+  String _numToString(Object? v) {
+    if (v == null) return '';
+    if (v is num) {
+      if (v == v.toInt()) return v.toInt().toString();
+      return v.toString();
+    }
+    return v.toString();
+  }
+
+  double? _parseDouble(String s) {
+    final t = s.trim();
+    if (t.isEmpty) return null;
+    return double.tryParse(t);
+  }
+
+  Future<void> _save() async {
+    setState(() {
+      _saving = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      await _ref.set({
+        'settings': {
+          'budgets': {
+            'dailyLimitUsd': _parseDouble(_dailyController.text),
+            'monthlyLimitUsd': _parseDouble(_monthlyController.text),
+            'perJobLimitUsd': _parseDouble(_perJobController.text),
+            'warningPct': _parseDouble(_warningController.text),
+            'hardStop': _hardStop,
+            'locked': _locked,
+          },
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      _notice = 'Budgets saved.';
+    } catch (e) {
+      _error = e.toString();
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<DocumentSnapshot<Map<String, dynamic>>>(
+      stream: _ref.snapshots(),
+      builder: (context, snap) {
+        final data = snap.data?.data();
+        if (data != null && !_loaded) {
+          _syncFromDoc(data);
+          _loaded = true;
+        }
+        return Card(
+          child: Padding(
+            padding: const EdgeInsets.all(16),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  'Cost budgets',
+                  style: TextStyle(fontWeight: FontWeight.w600),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  "Soft and hard spend limits enforced by each member's "
+                  'desktop app. Leave a field blank for no limit.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MoneyField(
+                        controller: _dailyController,
+                        label: 'Daily limit (USD)',
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _MoneyField(
+                        controller: _monthlyController,
+                        label: 'Monthly limit (USD)',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: _MoneyField(
+                        controller: _perJobController,
+                        label: 'Per-job limit (USD)',
+                      ),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: _MoneyField(
+                        controller: _warningController,
+                        label: 'Warning at % of limit',
+                        suffix: '%',
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                SwitchListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  value: _hardStop,
+                  onChanged: (v) => setState(() => _hardStop = v),
+                  title: const Text('Hard stop when a limit is hit'),
+                  subtitle: const Text(
+                    'When off, members see a warning but can continue.',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+                CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  controlAffinity: ListTileControlAffinity.leading,
+                  value: _locked,
+                  onChanged: (v) => setState(() => _locked = v ?? false),
+                  title: const Text('Lock'),
+                  subtitle: const Text(
+                    'Force these budgets on every member.',
+                    style: TextStyle(fontSize: 11),
+                  ),
+                ),
+                if (_error != null) ...[
+                  const SizedBox(height: 4),
+                  Text(_error!, style: const TextStyle(color: Colors.red)),
+                ],
+                if (_notice != null) ...[
+                  const SizedBox(height: 4),
+                  Text(_notice!, style: const TextStyle(color: Colors.green)),
+                ],
+                const SizedBox(height: 8),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: FilledButton(
+                    onPressed: _saving ? null : _save,
+                    child: _saving
+                        ? const SizedBox(
+                            width: 16,
+                            height: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Text('Save budgets'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _MoneyField extends StatelessWidget {
+  const _MoneyField({
+    required this.controller,
+    required this.label,
+    this.suffix,
+  });
+  final TextEditingController controller;
+  final String label;
+  final String? suffix;
+
+  @override
+  Widget build(BuildContext context) {
+    return TextField(
+      controller: controller,
+      keyboardType: const TextInputType.numberWithOptions(decimal: true),
+      decoration: InputDecoration(
+        labelText: label,
+        border: const OutlineInputBorder(),
+        isDense: true,
+        suffixText: suffix,
       ),
     );
   }
