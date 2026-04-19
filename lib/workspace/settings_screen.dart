@@ -76,7 +76,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
   bool _loaded = false;
   bool _savingName = false;
   bool _savingKeys = false;
-  bool _savingIntegrations = false;
+  bool _savingGithubToken = false;
+  bool _savingLinearApiKey = false;
   bool _savingRepoAccess = false;
   bool _importingRepos = false;
   bool _savingBudgets = false;
@@ -188,8 +189,10 @@ class _SettingsScreenState extends State<SettingsScreen> {
     try {
       await op();
       _notice = ok;
-    } catch (e) {
+      debugPrint('[settings] _saveSection ok: $ok');
+    } catch (e, st) {
       _error = e.toString();
+      debugPrint('[settings] _saveSection error: $e\n$st');
     } finally {
       if (mounted) setState(() => setSaving(false));
     }
@@ -360,25 +363,53 @@ class _SettingsScreenState extends State<SettingsScreen> {
     }
   }
 
-  Future<void> _saveIntegrations() async {
+  Future<void> _saveGithubToken() async {
     final wsId = widget.auth.workspaceId;
     if (wsId == null) return;
+    final token = _githubTokenController.text.trim();
+    if (token.isEmpty) {
+      setState(() => _error =
+          'Paste a GitHub token (ghp_… or github_pat_…) before saving.');
+      return;
+    }
+    if (!token.startsWith('ghp_') && !token.startsWith('github_pat_')) {
+      setState(() => _error =
+          "That doesn't look like a GitHub token. It should start with "
+          '"ghp_" or "github_pat_".');
+      return;
+    }
     await _saveSection(
-      'Workspace integrations saved.',
+      'GitHub token saved.',
       () async {
         final result = await FirebaseFunctions.instance
             .httpsCallable('saveWorkspaceIntegrationSecrets')
             .call<Map<String, dynamic>>({
           'workspaceId': wsId,
-          'githubToken': _githubTokenController.text.trim(),
-          'linearApiKey': _linearApiKeyController.text.trim(),
+          'githubToken': token,
         });
         _hasGithubToken = result.data['hasGithubToken'] as bool? ?? false;
-        _hasLinearApiKey = result.data['hasLinearApiKey'] as bool? ?? false;
         _githubTokenController.clear();
+      },
+      (v) => _savingGithubToken = v,
+    );
+  }
+
+  Future<void> _saveLinearApiKey() async {
+    final wsId = widget.auth.workspaceId;
+    if (wsId == null) return;
+    await _saveSection(
+      'Linear API key saved.',
+      () async {
+        final result = await FirebaseFunctions.instance
+            .httpsCallable('saveWorkspaceIntegrationSecrets')
+            .call<Map<String, dynamic>>({
+          'workspaceId': wsId,
+          'linearApiKey': _linearApiKeyController.text.trim(),
+        });
+        _hasLinearApiKey = result.data['hasLinearApiKey'] as bool? ?? false;
         _linearApiKeyController.clear();
       },
-      (v) => _savingIntegrations = v,
+      (v) => _savingLinearApiKey = v,
     );
   }
 
@@ -412,11 +443,23 @@ class _SettingsScreenState extends State<SettingsScreen> {
   }
 
   Future<void> _saveRepoAccess() async {
+    debugPrint('[settings] _saveRepoAccess invoked');
     final wsId = widget.auth.workspaceId;
-    if (wsId == null) return;
+    if (wsId == null) {
+      debugPrint('[settings] _saveRepoAccess aborted: workspaceId is null');
+      if (mounted) {
+        setState(() {
+          _error = 'No active workspace — cannot save.';
+          _notice = null;
+        });
+      }
+      return;
+    }
     final repos = _currentRepoSlugs();
+    debugPrint('[settings] _saveRepoAccess wsId=$wsId repos=$repos');
     final invalid = repos.where((repo) => !_repoSlugRe.hasMatch(repo)).toList();
     if (invalid.isNotEmpty) {
+      debugPrint('[settings] _saveRepoAccess aborted: invalid repos=$invalid');
       setState(() {
         _error =
             'Repositories must use owner/repo format. Invalid: ${invalid.join(', ')}';
@@ -470,32 +513,48 @@ class _SettingsScreenState extends State<SettingsScreen> {
       _error = null;
       _notice = null;
     });
+    List<String> available = const [];
     try {
       final result = await FirebaseFunctions.instance
           .httpsCallable('importWorkspaceGithubRepos')
           .call<Map<String, dynamic>>({'workspaceId': wsId});
-      final repos = ((result.data['repos'] as List?) ?? const [])
+      available = ((result.data['repos'] as List?) ?? const [])
           .map((value) => value?.toString().trim() ?? '')
           .where((value) => value.isNotEmpty)
           .toList();
-      final repoSet = repos.toSet();
-      if (!mounted) return;
-      setState(() {
-        _setRepoControllers(repos);
-        for (final entry in _repoAccessByUser.entries) {
-          entry.value.removeWhere((repo) => !repoSet.contains(repo));
-        }
-        _notice = repos.isEmpty
-            ? 'GitHub import returned no accessible repositories.'
-            : 'Imported ${repos.length} repositories from GitHub.';
-      });
     } on FirebaseFunctionsException catch (e) {
       if (mounted) setState(() => _error = e.message ?? e.code);
+      return;
     } catch (e) {
       if (mounted) setState(() => _error = e.toString());
+      return;
     } finally {
       if (mounted) setState(() => _importingRepos = false);
     }
+
+    if (!mounted) return;
+    if (available.isEmpty) {
+      setState(() => _notice =
+          'No repositories accessible with this token.');
+      return;
+    }
+
+    final existing = _currentRepoSlugs().toSet();
+    final picked = await showDialog<Set<String>>(
+      context: context,
+      builder: (_) => _GithubRepoPickerDialog(
+        available: available,
+        alreadyAdded: existing,
+      ),
+    );
+    if (picked == null || picked.isEmpty || !mounted) return;
+
+    setState(() {
+      _setRepoControllers([...existing, ...picked]);
+      _notice = 'Added ${picked.length} '
+          '${picked.length == 1 ? 'repository' : 'repositories'}. '
+          'Click "Save repositories & access" to persist.';
+    });
   }
 
   @override
@@ -556,38 +615,41 @@ class _SettingsScreenState extends State<SettingsScreen> {
                 onSave: _saveKeys,
               ),
               const SizedBox(height: 20),
-              _IntegrationsCard(
-                githubTokenController: _githubTokenController,
-                linearApiKeyController: _linearApiKeyController,
-                hasGithubToken: _hasGithubToken,
-                hasLinearApiKey: _hasLinearApiKey,
-                canEdit: canEdit,
-                saving: _savingIntegrations,
-                loading: _loadingAdminConfig,
-                onSave: _saveIntegrations,
-              ),
-              const SizedBox(height: 20),
-              _RepoAccessCard(
+              _GitHubCard(
+                tokenController: _githubTokenController,
+                hasToken: _hasGithubToken,
+                savingToken: _savingGithubToken,
+                onSaveToken: _saveGithubToken,
                 repoControllers: _repoControllers,
                 members: _workspaceMembers,
                 repoAccessByUser: _repoAccessByUser,
                 canEdit: canEdit,
                 loading: _loadingAdminConfig,
-                saving: _savingRepoAccess,
+                savingRepoAccess: _savingRepoAccess,
                 importing: _importingRepos,
                 currentUserUid: widget.auth.user?.uid,
                 onAddRepo: _addRepoField,
                 onImportGithubRepos: _importGithubRepos,
                 onRemoveRepo: _removeRepoField,
                 onToggleAccess: (uid, repo, enabled) => setState(() {
-                  final set = _repoAccessByUser.putIfAbsent(uid, () => <String>{});
+                  final set =
+                      _repoAccessByUser.putIfAbsent(uid, () => <String>{});
                   if (enabled) {
                     set.add(repo);
                   } else {
                     set.remove(repo);
                   }
                 }),
-                onSave: _saveRepoAccess,
+                onSaveRepoAccess: _saveRepoAccess,
+              ),
+              const SizedBox(height: 20),
+              _LinearCard(
+                apiKeyController: _linearApiKeyController,
+                hasApiKey: _hasLinearApiKey,
+                canEdit: canEdit,
+                saving: _savingLinearApiKey,
+                loading: _loadingAdminConfig,
+                onSave: _saveLinearApiKey,
               ),
               const SizedBox(height: 20),
               _BudgetsCard(
@@ -653,11 +715,13 @@ class _SectionCard extends StatelessWidget {
   const _SectionCard({
     required this.title,
     this.subtitle,
+    this.trailing,
     required this.child,
   });
 
   final String title;
   final String? subtitle;
+  final Widget? trailing;
   final Widget child;
 
   @override
@@ -668,7 +732,15 @@ class _SectionCard extends StatelessWidget {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Text(title, style: const TextStyle(fontWeight: FontWeight.w600)),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(title,
+                      style: const TextStyle(fontWeight: FontWeight.w600)),
+                ),
+                ?trailing,
+              ],
+            ),
             if (subtitle != null) ...[
               const SizedBox(height: 4),
               Text(subtitle!,
@@ -807,10 +879,27 @@ class _ApiKeysCard extends StatelessWidget {
   final void Function(String id) onClear;
   final VoidCallback onSave;
 
+  _SettingState _aggregateState() {
+    var anyValue = false;
+    var anyLocked = false;
+    var allLocked = true;
+    for (final p in providers) {
+      final hasValue = (keyControllers[p.id]?.text.trim().isNotEmpty) ?? false;
+      final isLocked = locked[p.id] ?? false;
+      if (hasValue) anyValue = true;
+      if (isLocked) anyLocked = true;
+      if (!isLocked) allLocked = false;
+    }
+    if (!anyValue) return _SettingState.notSet;
+    if (anyLocked && allLocked) return _SettingState.enforced;
+    return _SettingState.cloudDefault;
+  }
+
   @override
   Widget build(BuildContext context) {
     return _SectionCard(
       title: 'AI provider API keys',
+      trailing: _StatusChip(_aggregateState()),
       subtitle:
           "Paste your organisation's API keys here. Every team member's "
           'desktop app picks them up automatically. Lock a key to force '
@@ -914,25 +1003,387 @@ class _ProviderKeyRowState extends State<_ProviderKeyRow> {
 }
 
 // ---------------------------------------------------------------------------
-// Section: workspace integrations
+// Status chip — shows where a setting's value lives
 // ---------------------------------------------------------------------------
 
-class _IntegrationsCard extends StatelessWidget {
-  const _IntegrationsCard({
-    required this.githubTokenController,
-    required this.linearApiKeyController,
-    required this.hasGithubToken,
-    required this.hasLinearApiKey,
+/// Cloud-precedence state for a workspace setting, as seen from the admin
+/// panel. The admin panel never sees an individual member's local override,
+/// so these states describe what the cloud tells the desktop app to do:
+///
+///  * [enforced]   — value is set and `locked: true`. Desktop apps must use
+///                   this value; members cannot override it locally.
+///  * [cloudDefault] — value is set, `locked: false`. Desktop apps use this
+///                   as the default but members can override it locally.
+///  * [notSet]     — no value in the cloud. Each desktop app uses whatever
+///                   the member configured on their own machine.
+enum _SettingState { enforced, cloudDefault, notSet }
+
+class _StatusChip extends StatelessWidget {
+  const _StatusChip(this.state);
+  final _SettingState state;
+
+  @override
+  Widget build(BuildContext context) {
+    final (label, bg, fg, tooltip) = switch (state) {
+      _SettingState.enforced => (
+          'Cloud · enforced',
+          const Color(0xFFDCF2E0),
+          const Color(0xFF1B5E20),
+          'Value is set here and locked. Every member\'s desktop app '
+              'must use this value.',
+        ),
+      _SettingState.cloudDefault => (
+          'Cloud · default',
+          const Color(0xFFE3F2FD),
+          const Color(0xFF0D47A1),
+          'Value is set here as a default. Members can still override '
+              'it locally in the desktop app.',
+        ),
+      _SettingState.notSet => (
+          'Not set',
+          const Color(0xFFEEEEEE),
+          const Color(0xFF616161),
+          'No cloud value. Each desktop app uses the member\'s own '
+              'local configuration.',
+        ),
+    };
+    return Tooltip(
+      message: tooltip,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+        decoration: BoxDecoration(
+          color: bg,
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w600,
+            color: fg,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+_SettingState _stateFor({required bool hasValue, required bool locked}) {
+  if (!hasValue) return _SettingState.notSet;
+  return locked ? _SettingState.enforced : _SettingState.cloudDefault;
+}
+
+// ---------------------------------------------------------------------------
+// Section: GitHub (token + repositories + member access)
+// ---------------------------------------------------------------------------
+
+class _GitHubCard extends StatelessWidget {
+  const _GitHubCard({
+    required this.tokenController,
+    required this.hasToken,
+    required this.savingToken,
+    required this.onSaveToken,
+    required this.repoControllers,
+    required this.members,
+    required this.repoAccessByUser,
+    required this.canEdit,
+    required this.loading,
+    required this.savingRepoAccess,
+    required this.importing,
+    required this.currentUserUid,
+    required this.onAddRepo,
+    required this.onImportGithubRepos,
+    required this.onRemoveRepo,
+    required this.onToggleAccess,
+    required this.onSaveRepoAccess,
+  });
+
+  final TextEditingController tokenController;
+  final bool hasToken;
+  final bool savingToken;
+  final VoidCallback onSaveToken;
+
+  final List<TextEditingController> repoControllers;
+  final List<_WorkspaceMemberAccess> members;
+  final Map<String, Set<String>> repoAccessByUser;
+  final bool canEdit;
+  final bool loading;
+  final bool savingRepoAccess;
+  final bool importing;
+  final String? currentUserUid;
+  final VoidCallback onAddRepo;
+  final VoidCallback onImportGithubRepos;
+  final void Function(int index) onRemoveRepo;
+  final void Function(String uid, String repo, bool enabled) onToggleAccess;
+  final VoidCallback onSaveRepoAccess;
+
+  static final RegExp _slugRe =
+      RegExp(r'^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$');
+
+  List<String> get _repos {
+    final seen = <String>{};
+    final values = <String>[];
+    for (final controller in repoControllers) {
+      final value = controller.text.trim();
+      if (value.isEmpty || !seen.add(value)) continue;
+      values.add(value);
+    }
+    return values;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final repos = _repos;
+    return _SectionCard(
+      title: 'GitHub',
+      subtitle:
+          'Organisation-wide GitHub token, the repositories this workspace '
+          'can use, and which members can access each one. These are stored '
+          'in the cloud and always apply to every member.',
+      child: loading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // 1. Token
+                _LabeledRow(
+                  title: 'Organisation token',
+                  chip: _StatusChip(
+                    hasToken
+                        ? _SettingState.enforced
+                        : _SettingState.notSet,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                _SecretField(
+                  controller: tokenController,
+                  label: 'GitHub token (ghp_… or github_pat_…)',
+                  enabled: canEdit,
+                  configured: hasToken,
+                ),
+                if (canEdit) ...[
+                  const SizedBox(height: 8),
+                  _SaveButton(
+                    saving: savingToken,
+                    onSave: onSaveToken,
+                    label: 'Save GitHub token',
+                  ),
+                ],
+                const Divider(height: 32),
+
+                // 2. Repositories
+                _LabeledRow(
+                  title: 'Repositories',
+                  chip: _StatusChip(
+                    repos.isEmpty
+                        ? _SettingState.notSet
+                        : _SettingState.enforced,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Use the owner/repo format, e.g. "avokaido/desktop". '
+                  'Do not paste a token here — the token field is above.',
+                  style: TextStyle(fontSize: 12, color: Colors.black54),
+                ),
+                const SizedBox(height: 12),
+                for (var i = 0; i < repoControllers.length; i++) ...[
+                  _RepoField(
+                    controller: repoControllers[i],
+                    enabled: canEdit,
+                    onRemove: canEdit ? () => onRemoveRepo(i) : null,
+                    validate: (v) {
+                      final t = v.trim();
+                      if (t.isEmpty) return null;
+                      if (t.startsWith('ghp_') ||
+                          t.startsWith('github_pat_')) {
+                        return 'This looks like a token. Put it in the '
+                            'field above, not here.';
+                      }
+                      if (!_slugRe.hasMatch(t)) {
+                        return 'Expected owner/repository format.';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                ],
+                if (canEdit)
+                  Row(
+                    children: [
+                      OutlinedButton.icon(
+                        onPressed: onAddRepo,
+                        icon: const Icon(Icons.add),
+                        label: const Text('Add repository'),
+                      ),
+                      const SizedBox(width: 12),
+                      OutlinedButton.icon(
+                        onPressed: importing ? null : onImportGithubRepos,
+                        icon: importing
+                            ? const SizedBox(
+                                width: 14,
+                                height: 14,
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2),
+                              )
+                            : const Icon(Icons.sync),
+                        label: Text(
+                          importing ? 'Importing…' : 'Import from GitHub',
+                        ),
+                      ),
+                    ],
+                  ),
+                const SizedBox(height: 16),
+
+                // 3. Member access
+                if (members.isEmpty)
+                  const Text(
+                    'Invite teammates first to assign repository access.',
+                    style: TextStyle(color: Colors.black54),
+                  )
+                else if (repos.isEmpty)
+                  const Text(
+                    'Add at least one repository to configure member access.',
+                    style: TextStyle(color: Colors.black54),
+                  )
+                else ...[
+                  const Text(
+                    'Member access',
+                    style: TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  for (final member in members) ...[
+                    _MemberRepoAccessRow(
+                      member: member,
+                      repos: repos,
+                      selectedRepos:
+                          repoAccessByUser[member.uid] ?? const <String>{},
+                      enabled: canEdit,
+                      isCurrentUser: member.uid == currentUserUid,
+                      onToggle: (repo, enabled) =>
+                          onToggleAccess(member.uid, repo, enabled),
+                    ),
+                    const SizedBox(height: 12),
+                  ],
+                ],
+                if (canEdit)
+                  _SaveButton(
+                    saving: savingRepoAccess,
+                    onSave: onSaveRepoAccess,
+                    label: 'Save repositories & access',
+                  ),
+              ],
+            ),
+    );
+  }
+}
+
+class _RepoField extends StatefulWidget {
+  const _RepoField({
+    required this.controller,
+    required this.enabled,
+    required this.onRemove,
+    required this.validate,
+  });
+
+  final TextEditingController controller;
+  final bool enabled;
+  final VoidCallback? onRemove;
+  final String? Function(String) validate;
+
+  @override
+  State<_RepoField> createState() => _RepoFieldState();
+}
+
+class _RepoFieldState extends State<_RepoField> {
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    widget.controller.addListener(_revalidate);
+    _error = widget.validate(widget.controller.text);
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_revalidate);
+    super.dispose();
+  }
+
+  void _revalidate() {
+    final next = widget.validate(widget.controller.text);
+    if (next != _error) setState(() => _error = next);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Expanded(
+          child: TextField(
+            controller: widget.controller,
+            enabled: widget.enabled,
+            decoration: InputDecoration(
+              labelText: 'GitHub repository',
+              hintText: 'owner/repository',
+              border: const OutlineInputBorder(),
+              isDense: true,
+              errorText: _error,
+            ),
+            style: const TextStyle(fontFamily: 'monospace'),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Padding(
+          padding: const EdgeInsets.only(top: 4),
+          child: IconButton(
+            tooltip: 'Remove repository',
+            onPressed: widget.onRemove,
+            icon: const Icon(Icons.delete_outline),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _LabeledRow extends StatelessWidget {
+  const _LabeledRow({required this.title, required this.chip});
+  final String title;
+  final Widget chip;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      children: [
+        Text(title,
+            style: const TextStyle(
+                fontSize: 14, fontWeight: FontWeight.w600)),
+        const SizedBox(width: 10),
+        chip,
+      ],
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Section: Linear
+// ---------------------------------------------------------------------------
+
+class _LinearCard extends StatelessWidget {
+  const _LinearCard({
+    required this.apiKeyController,
+    required this.hasApiKey,
     required this.canEdit,
     required this.saving,
     required this.loading,
     required this.onSave,
   });
 
-  final TextEditingController githubTokenController;
-  final TextEditingController linearApiKeyController;
-  final bool hasGithubToken;
-  final bool hasLinearApiKey;
+  final TextEditingController apiKeyController;
+  final bool hasApiKey;
   final bool canEdit;
   final bool saving;
   final bool loading;
@@ -941,35 +1392,36 @@ class _IntegrationsCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return _SectionCard(
-      title: 'Workspace integrations',
+      title: 'Linear',
       subtitle:
-          'Securely store organisation-level GitHub and Linear credentials '
-          'for this workspace. Saved secrets are not shown again here; '
-          'enter a new value to rotate or clear one.',
+          'Organisation-wide Linear API key. Stored in the cloud and used '
+          'by every member\'s desktop app.',
       child: loading
           ? const Center(child: CircularProgressIndicator())
           : Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _SecretField(
-                  controller: githubTokenController,
-                  label: 'GitHub token',
-                  enabled: canEdit,
-                  configured: hasGithubToken,
+                _LabeledRow(
+                  title: 'API key',
+                  chip: _StatusChip(
+                    hasApiKey
+                        ? _SettingState.enforced
+                        : _SettingState.notSet,
+                  ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 8),
                 _SecretField(
-                  controller: linearApiKeyController,
-                  label: 'Linear API key',
+                  controller: apiKeyController,
+                  label: 'Linear API key (lin_api_…)',
                   enabled: canEdit,
-                  configured: hasLinearApiKey,
+                  configured: hasApiKey,
                 ),
                 if (canEdit) ...[
                   const SizedBox(height: 8),
                   _SaveButton(
                     saving: saving,
                     onSave: onSave,
-                    label: 'Save integrations',
+                    label: 'Save Linear API key',
                   ),
                 ],
               ],
@@ -1038,162 +1490,6 @@ class _SecretFieldState extends State<_SecretField> {
           ),
         ),
       ],
-    );
-  }
-}
-
-// ---------------------------------------------------------------------------
-// Section: repository access
-// ---------------------------------------------------------------------------
-
-class _RepoAccessCard extends StatelessWidget {
-  const _RepoAccessCard({
-    required this.repoControllers,
-    required this.members,
-    required this.repoAccessByUser,
-    required this.canEdit,
-    required this.loading,
-    required this.saving,
-    required this.importing,
-    required this.currentUserUid,
-    required this.onAddRepo,
-    required this.onImportGithubRepos,
-    required this.onRemoveRepo,
-    required this.onToggleAccess,
-    required this.onSave,
-  });
-
-  final List<TextEditingController> repoControllers;
-  final List<_WorkspaceMemberAccess> members;
-  final Map<String, Set<String>> repoAccessByUser;
-  final bool canEdit;
-  final bool loading;
-  final bool saving;
-  final bool importing;
-  final String? currentUserUid;
-  final VoidCallback onAddRepo;
-  final VoidCallback onImportGithubRepos;
-  final void Function(int index) onRemoveRepo;
-  final void Function(String uid, String repo, bool enabled) onToggleAccess;
-  final VoidCallback onSave;
-
-  List<String> get _repos {
-    final seen = <String>{};
-    final values = <String>[];
-    for (final controller in repoControllers) {
-      final value = controller.text.trim();
-      if (value.isEmpty || !seen.add(value)) continue;
-      values.add(value);
-    }
-    return values;
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final repos = _repos;
-    return _SectionCard(
-      title: 'GitHub repositories and access',
-      subtitle:
-          'List the repositories this workspace can use, then choose which '
-          'members can access each one.',
-      child: loading
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                for (var i = 0; i < repoControllers.length; i++) ...[
-                  Row(
-                    children: [
-                      Expanded(
-                        child: TextField(
-                          controller: repoControllers[i],
-                          enabled: canEdit,
-                          decoration: const InputDecoration(
-                            labelText: 'GitHub repository',
-                            hintText: 'owner/repository',
-                            border: OutlineInputBorder(),
-                            isDense: true,
-                          ),
-                          style: const TextStyle(fontFamily: 'monospace'),
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      IconButton(
-                        tooltip: 'Remove repository',
-                        onPressed: canEdit ? () => onRemoveRepo(i) : null,
-                        icon: const Icon(Icons.delete_outline),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                ],
-                if (canEdit)
-                  Row(
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: onAddRepo,
-                        icon: const Icon(Icons.add),
-                        label: const Text('Add repository'),
-                      ),
-                      const SizedBox(width: 12),
-                      OutlinedButton.icon(
-                        onPressed: importing ? null : onImportGithubRepos,
-                        icon: importing
-                            ? const SizedBox(
-                                width: 14,
-                                height: 14,
-                                child: CircularProgressIndicator(strokeWidth: 2),
-                              )
-                            : const Icon(Icons.sync),
-                        label: Text(
-                          importing ? 'Importing…' : 'Import from GitHub',
-                        ),
-                      ),
-                    ],
-                  ),
-                const SizedBox(height: 8),
-                if (members.isEmpty)
-                  const Text(
-                    'Invite teammates first to assign repository access.',
-                    style: TextStyle(color: Colors.black54),
-                  )
-                else if (repos.isEmpty)
-                  const Text(
-                    'Add at least one repository to configure member access.',
-                    style: TextStyle(color: Colors.black54),
-                  )
-                else
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Text(
-                        'Member access',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      const SizedBox(height: 8),
-                      for (final member in members) ...[
-                        _MemberRepoAccessRow(
-                          member: member,
-                          repos: repos,
-                          selectedRepos:
-                              repoAccessByUser[member.uid] ?? const <String>{},
-                          enabled: canEdit,
-                          isCurrentUser: member.uid == currentUserUid,
-                          onToggle: (repo, enabled) =>
-                              onToggleAccess(member.uid, repo, enabled),
-                        ),
-                        const SizedBox(height: 12),
-                      ],
-                    ],
-                  ),
-                if (canEdit)
-                  _SaveButton(
-                    saving: saving,
-                    onSave: onSave,
-                    label: 'Save repository access',
-                  ),
-              ],
-            ),
     );
   }
 }
@@ -1300,8 +1596,14 @@ class _BudgetsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasValue = dailyController.text.trim().isNotEmpty ||
+        monthlyController.text.trim().isNotEmpty ||
+        perJobController.text.trim().isNotEmpty ||
+        warningController.text.trim().isNotEmpty ||
+        hardStop;
     return _SectionCard(
       title: 'Cost budgets',
+      trailing: _StatusChip(_stateFor(hasValue: hasValue, locked: locked)),
       subtitle:
           'Soft and hard spend limits enforced by each member\'s desktop '
           'app. Leave a field blank for no limit.',
@@ -1447,8 +1749,11 @@ class _ModelDefaultsCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasValue = providers
+        .any((p) => controllers[p.id]?.text.trim().isNotEmpty ?? false);
     return _SectionCard(
       title: 'Model defaults',
+      trailing: _StatusChip(_stateFor(hasValue: hasValue, locked: locked)),
       subtitle:
           'Model id used for each provider, e.g. "claude-sonnet-4-6", '
           '"gpt-4-turbo", "gemini-1.5-pro".',
@@ -1514,8 +1819,10 @@ class _RoutingCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final hasValue = defaultProvider != null || fallbackProvider != null;
     return _SectionCard(
       title: 'Implementation routing',
+      trailing: _StatusChip(_stateFor(hasValue: hasValue, locked: locked)),
       subtitle:
           'Which provider the desktop app tries first, and which one it '
           'falls back to on error.',
@@ -1572,6 +1879,148 @@ class _RoutingCard extends StatelessWidget {
                 saving: saving, onSave: onSave, label: 'Save routing'),
         ],
       ),
+    );
+  }
+}
+
+class _GithubRepoPickerDialog extends StatefulWidget {
+  const _GithubRepoPickerDialog({
+    required this.available,
+    required this.alreadyAdded,
+  });
+
+  final List<String> available;
+  final Set<String> alreadyAdded;
+
+  @override
+  State<_GithubRepoPickerDialog> createState() =>
+      _GithubRepoPickerDialogState();
+}
+
+class _GithubRepoPickerDialogState extends State<_GithubRepoPickerDialog> {
+  final TextEditingController _searchController = TextEditingController();
+  final Set<String> _selected = <String>{};
+  String _query = '';
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
+  }
+
+  List<String> get _visible {
+    final q = _query.trim().toLowerCase();
+    if (q.isEmpty) return widget.available;
+    return widget.available
+        .where((slug) => slug.toLowerCase().contains(q))
+        .toList();
+  }
+
+  Iterable<String> get _selectable =>
+      _visible.where((slug) => !widget.alreadyAdded.contains(slug));
+
+  @override
+  Widget build(BuildContext context) {
+    final visible = _visible;
+    final selectable = _selectable.toList();
+    final allVisibleSelected = selectable.isNotEmpty &&
+        selectable.every(_selected.contains);
+
+    return AlertDialog(
+      title: const Text('Import GitHub repositories'),
+      content: SizedBox(
+        width: 520,
+        height: 520,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextField(
+              controller: _searchController,
+              autofocus: true,
+              decoration: const InputDecoration(
+                prefixIcon: Icon(Icons.search),
+                hintText: 'Filter repositories…',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              onChanged: (value) => setState(() => _query = value),
+            ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                TextButton.icon(
+                  onPressed: selectable.isEmpty
+                      ? null
+                      : () {
+                          setState(() {
+                            if (allVisibleSelected) {
+                              _selected.removeAll(selectable);
+                            } else {
+                              _selected.addAll(selectable);
+                            }
+                          });
+                        },
+                  icon: Icon(allVisibleSelected
+                      ? Icons.check_box
+                      : Icons.check_box_outline_blank),
+                  label: Text(allVisibleSelected ? 'Clear' : 'Select all'),
+                ),
+                const Spacer(),
+                Text(
+                  '${_selected.length} selected · ${visible.length} shown',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+            const Divider(height: 1),
+            Expanded(
+              child: visible.isEmpty
+                  ? const Center(child: Text('No matches.'))
+                  : ListView.builder(
+                      itemCount: visible.length,
+                      itemBuilder: (context, index) {
+                        final slug = visible[index];
+                        final alreadyAdded =
+                            widget.alreadyAdded.contains(slug);
+                        return CheckboxListTile(
+                          dense: true,
+                          value: alreadyAdded || _selected.contains(slug),
+                          onChanged: alreadyAdded
+                              ? null
+                              : (checked) {
+                                  setState(() {
+                                    if (checked == true) {
+                                      _selected.add(slug);
+                                    } else {
+                                      _selected.remove(slug);
+                                    }
+                                  });
+                                },
+                          title: Text(slug),
+                          subtitle:
+                              alreadyAdded ? const Text('Already added') : null,
+                          controlAffinity: ListTileControlAffinity.leading,
+                        );
+                      },
+                    ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _selected.isEmpty
+              ? null
+              : () => Navigator.of(context).pop(_selected),
+          child: Text(_selected.isEmpty
+              ? 'Add'
+              : 'Add ${_selected.length}'),
+        ),
+      ],
     );
   }
 }
