@@ -65,6 +65,25 @@ class _SettingsScreenState extends State<SettingsScreen> {
   String? _fallbackProvider;
   bool _routingLocked = false;
 
+  // QA rules — workspace-wide defaults for repository quality checks.
+  // Desktop clients read these from workspaces/{id}.settings.qaRules and
+  // seed the per-repo Edit Repository dialog. When `_qaRulesLocked` is true,
+  // the desktop app hides the per-repo controls and enforces these values.
+  static const List<({String id, String label})> _qaCheckIds = [
+    (id: 'dependencies', label: 'Dependencies'),
+    (id: 'format', label: 'Format'),
+    (id: 'analyze', label: 'Analyze'),
+    (id: 'test', label: 'Test'),
+  ];
+  final Map<String, bool> _qaCheckEnabled = {
+    for (final c in _qaCheckIds) c.id: true,
+  };
+  final Map<String, String> _qaCheckSeverity = {
+    for (final c in _qaCheckIds) c.id: 'critical',
+  };
+  bool _qaRulesLocked = false;
+  bool _savingQaRules = false;
+
   bool _loaded = false;
   bool _savingName = false;
   // ignore: unused_field
@@ -131,6 +150,22 @@ class _SettingsScreenState extends State<SettingsScreen> {
     _defaultProvider = routing['defaultProvider'] as String?;
     _fallbackProvider = routing['fallbackProvider'] as String?;
     _routingLocked = (routing['locked'] as bool?) ?? false;
+
+    // QA rules
+    final qa =
+        (settings['qaRules'] as Map?)?.cast<String, Object?>() ?? const {};
+    final qaChecks =
+        (qa['checks'] as Map?)?.cast<String, Object?>() ?? const {};
+    for (final c in _qaCheckIds) {
+      final entry = (qaChecks[c.id] as Map?)?.cast<String, Object?>();
+      _qaCheckEnabled[c.id] = (entry?['enabled'] as bool?) ?? true;
+      final severity = entry?['severity'] as String?;
+      _qaCheckSeverity[c.id] =
+          (severity == 'warning' || severity == 'critical')
+              ? severity!
+              : 'critical';
+    }
+    _qaRulesLocked = (qa['locked'] as bool?) ?? false;
   }
 
   DocumentReference<Map<String, dynamic>> _wsRef() {
@@ -225,6 +260,29 @@ class _SettingsScreenState extends State<SettingsScreen> {
         'updatedAt': FieldValue.serverTimestamp(),
       }, SetOptions(merge: true)),
       (v) => _savingRouting = v,
+    );
+  }
+
+  Future<void> _saveQaRules() async {
+    final checks = <String, Object?>{
+      for (final c in _qaCheckIds)
+        c.id: {
+          'enabled': _qaCheckEnabled[c.id] ?? true,
+          'severity': _qaCheckSeverity[c.id] ?? 'critical',
+        },
+    };
+    await _saveSection(
+      'QA rules saved.',
+      () => _wsRef().set({
+        'settings': {
+          'qaRules': {
+            'checks': checks,
+            'locked': _qaRulesLocked,
+          },
+        },
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true)),
+      (v) => _savingQaRules = v,
     );
   }
 
@@ -627,6 +685,21 @@ class _SettingsScreenState extends State<SettingsScreen> {
                     setState(() => _fallbackProvider = v),
                 onLockedChanged: (v) => setState(() => _routingLocked = v),
                 onSave: _saveRouting,
+              ),
+              const SizedBox(height: 20),
+              _QaRulesCard(
+                checkIds: _qaCheckIds,
+                enabled: _qaCheckEnabled,
+                severity: _qaCheckSeverity,
+                locked: _qaRulesLocked,
+                canEdit: canEdit,
+                saving: _savingQaRules,
+                onEnabledChanged: (id, v) =>
+                    setState(() => _qaCheckEnabled[id] = v),
+                onSeverityChanged: (id, v) =>
+                    setState(() => _qaCheckSeverity[id] = v),
+                onLockedChanged: (v) => setState(() => _qaRulesLocked = v),
+                onSave: _saveQaRules,
               ),
               if (_error != null) ...[
                 const SizedBox(height: 12),
@@ -1757,6 +1830,177 @@ class _RoutingCard extends StatelessWidget {
           if (canEdit)
             _SaveButton(
                 saving: saving, onSave: onSave, label: 'Save routing'),
+        ],
+      ),
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Section: QA rules
+// ---------------------------------------------------------------------------
+
+/// Workspace-wide QA check defaults. Desktop clients read these from
+/// `workspaces/{id}.settings.qaRules` and use them to seed the per-repo
+/// Edit Repository dialog. When `locked` is true, the desktop app hides the
+/// per-repo QA controls and enforces these values.
+class _QaRulesCard extends StatelessWidget {
+  const _QaRulesCard({
+    required this.checkIds,
+    required this.enabled,
+    required this.severity,
+    required this.locked,
+    required this.canEdit,
+    required this.saving,
+    required this.onEnabledChanged,
+    required this.onSeverityChanged,
+    required this.onLockedChanged,
+    required this.onSave,
+  });
+
+  final List<({String id, String label})> checkIds;
+  final Map<String, bool> enabled;
+  final Map<String, String> severity;
+  final bool locked;
+  final bool canEdit;
+  final bool saving;
+  final void Function(String id, bool v) onEnabledChanged;
+  final void Function(String id, String v) onSeverityChanged;
+  final ValueChanged<bool> onLockedChanged;
+  final VoidCallback onSave;
+
+  @override
+  Widget build(BuildContext context) {
+    final hasValue = checkIds.any((c) => enabled[c.id] ?? true);
+    return _SectionCard(
+      title: 'QA rules',
+      trailing: _StatusChip(_stateFor(hasValue: hasValue, locked: locked)),
+      subtitle:
+          'Which quality checks run on every repository, and whether a '
+          'failure blocks the release (Critical) or just shows a warning. '
+          'Lock to enforce these values across every member.',
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.only(bottom: 4),
+            child: Row(
+              children: const [
+                SizedBox(width: 40),
+                Expanded(
+                  flex: 3,
+                  child: Text(
+                    'Check',
+                    style:
+                        TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ),
+                SizedBox(
+                  width: 180,
+                  child: Text(
+                    'Severity',
+                    style:
+                        TextStyle(fontSize: 12, color: Colors.black54),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          for (final c in checkIds)
+            _QaCheckRow(
+              id: c.id,
+              label: c.label,
+              enabled: enabled[c.id] ?? true,
+              severity: severity[c.id] ?? 'critical',
+              canEdit: canEdit,
+              onEnabledChanged: (v) => onEnabledChanged(c.id, v),
+              onSeverityChanged: (v) => onSeverityChanged(c.id, v),
+            ),
+          const SizedBox(height: 4),
+          _LockCheckbox(
+            locked: locked,
+            enabled: canEdit,
+            onChanged: onLockedChanged,
+          ),
+          if (canEdit)
+            _SaveButton(
+                saving: saving, onSave: onSave, label: 'Save QA rules'),
+        ],
+      ),
+    );
+  }
+}
+
+class _QaCheckRow extends StatelessWidget {
+  const _QaCheckRow({
+    required this.id,
+    required this.label,
+    required this.enabled,
+    required this.severity,
+    required this.canEdit,
+    required this.onEnabledChanged,
+    required this.onSeverityChanged,
+  });
+
+  final String id;
+  final String label;
+  final bool enabled;
+  final String severity;
+  final bool canEdit;
+  final ValueChanged<bool> onEnabledChanged;
+  final ValueChanged<String> onSeverityChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 2),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 40,
+            child: Checkbox(
+              value: enabled,
+              onChanged:
+                  canEdit ? (v) => onEnabledChanged(v ?? false) : null,
+            ),
+          ),
+          Expanded(
+            flex: 3,
+            child: Text(
+              label,
+              style: TextStyle(
+                fontSize: 14,
+                color: enabled ? null : Colors.black45,
+              ),
+            ),
+          ),
+          SizedBox(
+            width: 180,
+            child: DropdownButtonFormField<String>(
+              initialValue: severity,
+              decoration: const InputDecoration(
+                border: OutlineInputBorder(),
+                isDense: true,
+                contentPadding:
+                    EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: 'critical',
+                  child: Text('Critical — blocks'),
+                ),
+                DropdownMenuItem(
+                  value: 'warning',
+                  child: Text('Warning — advisory'),
+                ),
+              ],
+              onChanged: canEdit && enabled
+                  ? (v) {
+                      if (v != null) onSeverityChanged(v);
+                    }
+                  : null,
+            ),
+          ),
         ],
       ),
     );
