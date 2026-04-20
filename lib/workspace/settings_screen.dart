@@ -74,6 +74,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
     (id: 'format', label: 'Format'),
     (id: 'analyze', label: 'Analyze'),
     (id: 'test', label: 'Test'),
+    (id: 'complexity', label: 'Big O (complexity)'),
+    (id: 'logs', label: 'System logs'),
   ];
   final Map<String, bool> _qaCheckEnabled = {
     for (final c in _qaCheckIds) c.id: true,

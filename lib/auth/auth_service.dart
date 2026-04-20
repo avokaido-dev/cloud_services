@@ -25,11 +25,9 @@ enum AuthStatus {
 /// End users sign in via GitHub, Google, Microsoft, or Apple OAuth, with
 /// email/password as a fallback.
 class AuthService extends ChangeNotifier {
-  AuthService({
-    FirebaseAuth? auth,
-    FirebaseFirestore? firestore,
-  })  : _auth = auth ?? FirebaseAuth.instance,
-        _firestore = firestore ?? FirebaseFirestore.instance {
+  AuthService({FirebaseAuth? auth, FirebaseFirestore? firestore})
+    : _auth = auth ?? FirebaseAuth.instance,
+      _firestore = firestore ?? FirebaseFirestore.instance {
     _auth.authStateChanges().listen(_onAuthChanged);
     _handlePendingRedirect();
     _handlePendingEmailLink();
@@ -52,6 +50,7 @@ class AuthService extends ChangeNotifier {
   Timer? _sessionHeartbeat;
   bool _handlingForcedSignOut = false;
   bool _sessionTrackingAvailable = true;
+  bool _requireInviteSignInSetup = false;
 
   AuthStatus get status => _status;
   User? get user => _user;
@@ -59,6 +58,7 @@ class AuthService extends ChangeNotifier {
   String? get workspaceRole => _workspaceRole;
   bool get isOrgAdmin => _workspaceRole == 'admin';
   String? get errorMessage => _errorMessage;
+  bool get requireInviteSignInSetup => _requireInviteSignInSetup;
 
   bool _pendingEmailLinkNeedsEmail = false;
   bool get pendingEmailLinkNeedsEmail => _pendingEmailLinkNeedsEmail;
@@ -76,11 +76,11 @@ class AuthService extends ChangeNotifier {
   Future<void> signInWithGithub() => _signInWith(GithubAuthProvider());
 
   Future<void> signInWithGoogle() => _signInWith(
-        GoogleAuthProvider()
-          ..addScope('email')
-          ..addScope('profile')
-          ..setCustomParameters(const {'prompt': 'select_account'}),
-      );
+    GoogleAuthProvider()
+      ..addScope('email')
+      ..addScope('profile')
+      ..setCustomParameters(const {'prompt': 'select_account'}),
+  );
 
   Future<void> signInWithMicrosoft() =>
       _signInWith(OAuthProvider('microsoft.com'));
@@ -88,10 +88,10 @@ class AuthService extends ChangeNotifier {
   // Apple web sign-in requires the `email` and `name` scopes to be requested
   // explicitly, otherwise Firebase returns no user profile data.
   Future<void> signInWithApple() => _signInWith(
-        OAuthProvider('apple.com')
-          ..addScope('email')
-          ..addScope('name'),
-      );
+    OAuthProvider('apple.com')
+      ..addScope('email')
+      ..addScope('name'),
+  );
 
   // Picks up the OAuth result after a redirect-based sign-in completes.
   // Errors (e.g. provider not configured) surface here rather than in
@@ -118,8 +118,7 @@ class AuthService extends ChangeNotifier {
     final currentUrl = web.window.location.href;
     if (!_auth.isSignInWithEmailLink(currentUrl)) return;
 
-    final cachedEmail =
-        web.window.localStorage.getItem(_pendingEmailKey);
+    final cachedEmail = web.window.localStorage.getItem(_pendingEmailKey);
     if (cachedEmail != null && cachedEmail.isNotEmpty) {
       await completeEmailLinkSignIn(cachedEmail);
     } else {
@@ -136,8 +135,12 @@ class AuthService extends ChangeNotifier {
         email: email.trim(),
         emailLink: currentUrl,
       );
+      await FirebaseFunctions.instance
+          .httpsCallable('finalizeEmailLinkInvite')
+          .call<Map<String, dynamic>>();
       web.window.localStorage.removeItem(_pendingEmailKey);
       _pendingEmailLinkNeedsEmail = false;
+      _requireInviteSignInSetup = true;
       // Strip the long query string from the address bar once consumed.
       web.window.history.replaceState(null, '', '/#/signin');
     } on FirebaseAuthException catch (e) {
@@ -146,6 +149,84 @@ class AuthService extends ChangeNotifier {
       _errorMessage = e.toString();
     }
     notifyListeners();
+  }
+
+  Future<void> linkCurrentUserWithGithub() =>
+      _linkCurrentUserWith(GithubAuthProvider());
+
+  Future<void> linkCurrentUserWithGoogle() => _linkCurrentUserWith(
+    GoogleAuthProvider()
+      ..addScope('email')
+      ..addScope('profile')
+      ..setCustomParameters(const {'prompt': 'select_account'}),
+  );
+
+  Future<void> linkCurrentUserWithMicrosoft() =>
+      _linkCurrentUserWith(OAuthProvider('microsoft.com'));
+
+  Future<void> linkCurrentUserWithApple() => _linkCurrentUserWith(
+    OAuthProvider('apple.com')
+      ..addScope('email')
+      ..addScope('name'),
+  );
+
+  Future<void> _linkCurrentUserWith(AuthProvider provider) async {
+    clearError();
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) {
+      _errorMessage = 'Sign in first to link an SSO provider.';
+      notifyListeners();
+      return;
+    }
+
+    try {
+      if (!kIsWeb) {
+        throw UnsupportedError('Provider linking is only supported on web.');
+      }
+      await currentUser.linkWithPopup(provider);
+      _requireInviteSignInSetup = false;
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = _mapLinkingError(e);
+    } catch (e) {
+      _errorMessage = e.toString();
+    }
+    notifyListeners();
+  }
+
+  Future<void> setPasswordForCurrentUser(String password) async {
+    clearError();
+    final currentUser = _auth.currentUser;
+    if (currentUser == null) {
+      _errorMessage = 'Sign in first to set a password.';
+      notifyListeners();
+      return;
+    }
+
+    try {
+      await currentUser.updatePassword(password);
+      _requireInviteSignInSetup = false;
+    } on FirebaseAuthException catch (e) {
+      _errorMessage = _mapAuthError(e);
+    } catch (e) {
+      _errorMessage = e.toString();
+    }
+    notifyListeners();
+  }
+
+  String _mapLinkingError(FirebaseAuthException e) {
+    switch (e.code) {
+      case 'provider-already-linked':
+        return 'That sign-in method is already linked to your account.';
+      case 'credential-already-in-use':
+        return 'That sign-in method is already linked to another account.';
+      case 'popup-blocked':
+      case 'popup_closed_by_user':
+      case 'cancelled-popup-request':
+      case 'web-context-cancelled':
+        return 'The sign-in popup was interrupted. Please try again.';
+      default:
+        return e.message ?? e.code;
+    }
   }
 
   Future<void> _signInWith(AuthProvider provider) async {
@@ -270,6 +351,7 @@ class AuthService extends ChangeNotifier {
       _status = AuthStatus.signedOut;
       _workspaceId = null;
       _workspaceRole = null;
+      _requireInviteSignInSetup = false;
       notifyListeners();
       return;
     }
@@ -333,7 +415,8 @@ class AuthService extends ChangeNotifier {
         final activeSessionId = data?['activeSessionId'] as String?;
         final status = data?['status'] as String?;
 
-        final hasOtherActiveSession = snap.exists &&
+        final hasOtherActiveSession =
+            snap.exists &&
             status == 'active' &&
             activeSessionId != null &&
             activeSessionId.isNotEmpty &&
@@ -382,10 +465,7 @@ class AuthService extends ChangeNotifier {
       _errorMessage =
           'This account was signed in twice, so both sessions were signed out.';
       notifyListeners();
-      await _signOutInternal(
-        clearSessionDoc: false,
-        clearConflictDoc: true,
-      );
+      await _signOutInternal(clearSessionDoc: false, clearConflictDoc: true);
       return false;
     }
 
@@ -413,7 +493,8 @@ class AuthService extends ChangeNotifier {
                 .toSet() ??
             const <String>{};
         final isConflict = status == 'conflict';
-        final superseded = status == 'active' &&
+        final superseded =
+            status == 'active' &&
             activeSessionId != null &&
             activeSessionId.isNotEmpty &&
             activeSessionId != sessionId;
@@ -550,7 +631,8 @@ class AuthService extends ChangeNotifier {
         final data = snap.data();
         if (!snap.exists || data == null) return;
         if (data['status'] != 'conflict') return;
-        final ids = (data['conflictSessionIds'] as List?)
+        final ids =
+            (data['conflictSessionIds'] as List?)
                 ?.map((v) => v?.toString() ?? '')
                 .where((v) => v.isNotEmpty)
                 .toSet() ??

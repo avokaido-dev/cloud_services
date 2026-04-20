@@ -16,12 +16,80 @@ class BillingScreen extends StatefulWidget {
   State<BillingScreen> createState() => _BillingScreenState();
 }
 
+class _PaymentMethodInfo {
+  const _PaymentMethodInfo({
+    required this.hasPaymentMethod,
+    this.brand,
+    this.last4,
+    this.expMonth,
+    this.expYear,
+    this.billingName,
+  });
+  final bool hasPaymentMethod;
+  final String? brand;
+  final String? last4;
+  final int? expMonth;
+  final int? expYear;
+  final String? billingName;
+
+  String get displayLabel {
+    if (!hasPaymentMethod) return 'Not yet added';
+    final b = brand != null
+        ? '${brand![0].toUpperCase()}${brand!.substring(1)}'
+        : 'Card';
+    final expiry = expMonth != null && expYear != null
+        ? ' · ${expMonth.toString().padLeft(2, '0')}/${expYear.toString().substring(2)}'
+        : '';
+    return '$b ···· $last4$expiry';
+  }
+}
+
 class _BillingScreenState extends State<BillingScreen> {
   bool _ensuringCustomer = false;
   bool _startingSubscription = false;
   bool _openingPortal = false;
+  bool _loadingPaymentMethod = false;
+  _PaymentMethodInfo? _paymentMethodInfo;
   String? _error;
   String? _notice;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchPaymentMethod();
+  }
+
+  Future<void> _fetchPaymentMethod() async {
+    final wsId = widget.auth.workspaceId;
+    if (wsId == null) return;
+    setState(() => _loadingPaymentMethod = true);
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('getStripePaymentMethod')
+          .call<Map<String, dynamic>>({'workspaceId': wsId});
+      final d = result.data;
+      if (mounted) {
+        setState(() {
+          _paymentMethodInfo = _PaymentMethodInfo(
+            hasPaymentMethod: d['hasPaymentMethod'] as bool? ?? false,
+            brand: d['brand'] as String?,
+            last4: d['last4'] as String?,
+            expMonth: (d['expMonth'] as num?)?.toInt(),
+            expYear: (d['expYear'] as num?)?.toInt(),
+            billingName: d['billingName'] as String?,
+          );
+        });
+      }
+    } on FirebaseFunctionsException catch (e) {
+      if (mounted) {
+        setState(() => _error = 'Could not load payment method: ${e.message}');
+      }
+    } catch (e) {
+      if (mounted) setState(() => _error = 'Could not load payment method: $e');
+    } finally {
+      if (mounted) setState(() => _loadingPaymentMethod = false);
+    }
+  }
 
   Future<void> _ensureCustomer() async {
     final wsId = widget.auth.workspaceId;
@@ -61,8 +129,9 @@ class _BillingScreenState extends State<BillingScreen> {
     } on FirebaseFunctionsException catch (e) {
       if (e.code == 'failed-precondition' &&
           (e.message?.contains('ensureStripeCustomer') ?? false)) {
-        setState(() => _error =
-            'Create the Stripe customer first, then try again.');
+        setState(
+          () => _error = 'Create the Stripe customer first, then try again.',
+        );
       } else {
         setState(() => _error = e.message ?? 'Could not start subscription.');
       }
@@ -86,19 +155,21 @@ class _BillingScreenState extends State<BillingScreen> {
       final result = await FirebaseFunctions.instance
           .httpsCallable('createBillingPortalSession')
           .call<Map<String, dynamic>>({
-        'workspaceId': wsId,
-        'returnUrl': returnUrl,
-      });
+            'workspaceId': wsId,
+            'returnUrl': returnUrl,
+          });
       final url = result.data['url'] as String?;
       if (url != null) {
-        // Open in a new tab so the main app keeps its auth/workspace state.
-        // Webhook updates flow into the billing doc and the stream refreshes
-        // this screen when the user returns.
         web.window.open(url, '_blank');
         if (mounted) {
-          setState(() => _notice =
-              'Opened Stripe in a new tab. This page will update once '
-              'your payment method is saved.');
+          setState(
+            () => _notice =
+                'Opened Stripe in a new tab. Return here after saving your '
+                'payment method and refresh to see the update.',
+          );
+          // Refresh payment method after a short delay to pick up changes
+          // made in the portal before the user returns.
+          Future.delayed(const Duration(seconds: 5), _fetchPaymentMethod);
         }
       }
     } on FirebaseFunctionsException catch (e) {
@@ -136,9 +207,13 @@ class _BillingScreenState extends State<BillingScreen> {
           ),
           const SizedBox(height: 16),
           if (_error != null)
-            _Banner(text: _error!, color: Colors.red.shade50, onClose: () {
-              setState(() => _error = null);
-            }),
+            _Banner(
+              text: _error!,
+              color: Colors.red.shade50,
+              onClose: () {
+                setState(() => _error = null);
+              },
+            ),
           if (_notice != null)
             _Banner(
               text: _notice!,
@@ -161,9 +236,12 @@ class _BillingScreenState extends State<BillingScreen> {
                 ensuring: _ensuringCustomer,
                 starting: _startingSubscription,
                 opening: _openingPortal,
+                loadingPaymentMethod: _loadingPaymentMethod,
+                paymentMethodInfo: _paymentMethodInfo,
                 onEnsureCustomer: _ensureCustomer,
                 onStartSubscription: _startSubscription,
                 onOpenPortal: _openPortal,
+                onRefreshPaymentMethod: _fetchPaymentMethod,
               );
             },
           ),
@@ -235,10 +313,10 @@ class _BudgetSectionState extends State<_BudgetSection> {
       await FirebaseFunctions.instance
           .httpsCallable('saveBillingBudget')
           .call<Map<String, dynamic>>({
-        'workspaceId': widget.workspaceId,
-        'monthlyCapCents': (usd * 100).round(),
-        'hardStop': _hardStop,
-      });
+            'workspaceId': widget.workspaceId,
+            'monthlyCapCents': (usd * 100).round(),
+            'hardStop': _hardStop,
+          });
       widget.onNotice('Budget saved.');
     } on FirebaseFunctionsException catch (e) {
       widget.onError(e.message ?? 'Could not save budget.');
@@ -271,8 +349,10 @@ class _BudgetSectionState extends State<_BudgetSection> {
         .doc('workspaces/${widget.workspaceId}/billing/stripe')
         .snapshots();
     final rollupStream = FirebaseFirestore.instance
-        .doc('workspaces/${widget.workspaceId}/billingRollup/'
-            '${_monthKey(DateTime.now())}')
+        .doc(
+          'workspaces/${widget.workspaceId}/billingRollup/'
+          '${_monthKey(DateTime.now())}',
+        )
         .snapshots();
     final alertsStream = FirebaseFirestore.instance
         .collection('workspaces/${widget.workspaceId}/billingAlerts')
@@ -290,8 +370,9 @@ class _BudgetSectionState extends State<_BudgetSection> {
 
         if (!_hydrated && bSnap.hasData) {
           _hydrated = true;
-          _capController.text =
-              capCents > 0 ? (capCents / 100).toStringAsFixed(2) : '';
+          _capController.text = capCents > 0
+              ? (capCents / 100).toStringAsFixed(2)
+              : '';
           _hardStop = hardStop;
         }
 
@@ -322,22 +403,26 @@ class _BudgetSectionState extends State<_BudgetSection> {
                         child: Text(
                           'Monthly cap reached — further AI calls are paused.',
                           style: TextStyle(
-                              fontSize: 13,
-                              fontWeight: FontWeight.w600,
-                              color: Color(0xFFB71C1C)),
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFFB71C1C),
+                          ),
                         ),
                       ),
                       FilledButton(
                         onPressed: _resetting ? null : _resetCap,
                         style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFFB71C1C)),
+                          backgroundColor: const Color(0xFFB71C1C),
+                        ),
                         child: _resetting
                             ? const SizedBox(
                                 width: 14,
                                 height: 14,
                                 child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white))
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
                             : const Text('Resume'),
                       ),
                     ],
@@ -362,7 +447,8 @@ class _BudgetSectionState extends State<_BudgetSection> {
                     child: TextField(
                       controller: _capController,
                       keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
+                        decimal: true,
+                      ),
                       decoration: const InputDecoration(
                         labelText: 'Monthly cap (USD)',
                         hintText: 'e.g. 500.00 — leave empty or 0 to disable',
@@ -375,8 +461,10 @@ class _BudgetSectionState extends State<_BudgetSection> {
                   Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      const Text('Enforce cap',
-                          style: TextStyle(fontSize: 12, color: Colors.black54)),
+                      const Text(
+                        'Enforce cap',
+                        style: TextStyle(fontSize: 12, color: Colors.black54),
+                      ),
                       const SizedBox(height: 4),
                       Switch(
                         value: _hardStop,
@@ -402,7 +490,8 @@ class _BudgetSectionState extends State<_BudgetSection> {
                       ? const SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : const Icon(Icons.save_outlined),
                   label: const Text('Save budget'),
                 ),
@@ -424,15 +513,12 @@ class _BudgetSectionState extends State<_BudgetSection> {
                       padding: EdgeInsets.symmetric(vertical: 4),
                       child: Text(
                         'No alerts yet. Thresholds fire at 50%, 80%, and 100%.',
-                        style:
-                            TextStyle(fontSize: 12, color: Colors.black54),
+                        style: TextStyle(fontSize: 12, color: Colors.black54),
                       ),
                     );
                   }
                   return Column(
-                    children: [
-                      for (final d in docs) _AlertRow(data: d.data()),
-                    ],
+                    children: [for (final d in docs) _AlertRow(data: d.data())],
                   );
                 },
               ),
@@ -478,7 +564,10 @@ class _BudgetProgress extends StatelessWidget {
             Text(
               '\$${spendUsd.toStringAsFixed(2)}',
               style: TextStyle(
-                  fontSize: 18, fontWeight: FontWeight.w700, color: color),
+                fontSize: 18,
+                fontWeight: FontWeight.w700,
+                color: color,
+              ),
             ),
             const SizedBox(width: 6),
             Text(
@@ -551,26 +640,36 @@ class _SubscriptionCard extends StatelessWidget {
     required this.ensuring,
     required this.starting,
     required this.opening,
+    required this.loadingPaymentMethod,
+    required this.paymentMethodInfo,
     required this.onEnsureCustomer,
     required this.onStartSubscription,
     required this.onOpenPortal,
+    required this.onRefreshPaymentMethod,
   });
 
   final Map<String, dynamic>? data;
   final bool ensuring;
   final bool starting;
   final bool opening;
+  final bool loadingPaymentMethod;
+  final _PaymentMethodInfo? paymentMethodInfo;
   final VoidCallback onEnsureCustomer;
   final VoidCallback onStartSubscription;
   final VoidCallback onOpenPortal;
+  final VoidCallback onRefreshPaymentMethod;
 
   @override
   Widget build(BuildContext context) {
     final customerId = data?['customerId'] as String?;
     final subscriptionId = data?['subscriptionId'] as String?;
     final status = data?['subscriptionStatus'] as String?;
-    final hasPaymentMethod = data?['hasPaymentMethod'] as bool? ?? false;
     final cancelAtPeriodEnd = data?['cancelAtPeriodEnd'] as bool? ?? false;
+    final hasLiveSubscription =
+        status == 'active' || status == 'trialing' || status == 'past_due';
+    final hasPaymentMethod =
+        paymentMethodInfo?.hasPaymentMethod ??
+        (data?['hasPaymentMethod'] as bool? ?? false);
 
     return Container(
       padding: const EdgeInsets.all(20),
@@ -592,8 +691,10 @@ class _SubscriptionCard extends StatelessWidget {
               const SizedBox(width: 12),
               if (cancelAtPeriodEnd)
                 const Chip(
-                  label: Text('Cancels at period end',
-                      style: TextStyle(fontSize: 11)),
+                  label: Text(
+                    'Cancels at period end',
+                    style: TextStyle(fontSize: 11),
+                  ),
                   visualDensity: VisualDensity.compact,
                   backgroundColor: Color(0xFFFFF3E0),
                 ),
@@ -602,10 +703,13 @@ class _SubscriptionCard extends StatelessWidget {
           const SizedBox(height: 12),
           _KeyValueRow('Stripe customer', customerId ?? '—'),
           _KeyValueRow('Subscription', subscriptionId ?? '—'),
-          _KeyValueRow(
-            'Payment method',
-            hasPaymentMethod ? 'On file' : 'Not yet added',
+          _PaymentMethodRow(
+            info: paymentMethodInfo,
+            loading: loadingPaymentMethod,
+            onRefresh: onRefreshPaymentMethod,
           ),
+          if (paymentMethodInfo?.billingName != null)
+            _KeyValueRow('Billing name', paymentMethodInfo!.billingName!),
           const SizedBox(height: 16),
           Wrap(
             spacing: 8,
@@ -618,18 +722,20 @@ class _SubscriptionCard extends StatelessWidget {
                       ? const SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : const Icon(Icons.person_add_outlined),
                   label: const Text('Create Stripe customer'),
                 ),
-              if (customerId != null && subscriptionId == null)
+              if (customerId != null && !hasLiveSubscription)
                 FilledButton.icon(
                   onPressed: starting ? null : onStartSubscription,
                   icon: starting
                       ? const SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : const Icon(Icons.play_circle_outline),
                   label: const Text('Start subscription'),
                 ),
@@ -640,13 +746,71 @@ class _SubscriptionCard extends StatelessWidget {
                       ? const SizedBox(
                           width: 14,
                           height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2))
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
                       : const Icon(Icons.open_in_new),
-                  label: Text(hasPaymentMethod
-                      ? 'Manage billing in Stripe'
-                      : 'Add payment method'),
+                  label: Text(
+                    hasPaymentMethod
+                        ? 'Manage billing in Stripe'
+                        : 'Add payment method',
+                  ),
                 ),
             ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _PaymentMethodRow extends StatelessWidget {
+  const _PaymentMethodRow({
+    required this.info,
+    required this.loading,
+    required this.onRefresh,
+  });
+
+  final _PaymentMethodInfo? info;
+  final bool loading;
+  final VoidCallback onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const SizedBox(
+            width: 140,
+            child: Text(
+              'Payment method',
+              style: TextStyle(
+                color: Colors.black54,
+                fontSize: 13,
+                height: 1.4,
+              ),
+            ),
+          ),
+          Expanded(
+            child: loading
+                ? const SizedBox(
+                    height: 16,
+                    width: 16,
+                    child: CircularProgressIndicator(strokeWidth: 1.5),
+                  )
+                : Text(
+                    info?.displayLabel ?? 'Not yet added',
+                    style: const TextStyle(fontSize: 13, height: 1.4),
+                  ),
+          ),
+          IconButton(
+            tooltip: 'Refresh',
+            iconSize: 16,
+            padding: EdgeInsets.zero,
+            visualDensity: VisualDensity.compact,
+            onPressed: loading ? null : onRefresh,
+            icon: const Icon(Icons.refresh, size: 16),
           ),
         ],
       ),
@@ -736,7 +900,10 @@ class _KeyValueRow extends StatelessWidget {
             child: Text(
               k,
               style: const TextStyle(
-                  color: Colors.black54, fontSize: 13, height: 1.4),
+                color: Colors.black54,
+                fontSize: 13,
+                height: 1.4,
+              ),
             ),
           ),
           Expanded(
@@ -833,10 +1000,7 @@ class _InvoicesList extends StatelessWidget {
           child: Column(
             children: [
               for (var i = 0; i < docs.length; i++)
-                _InvoiceRow(
-                  data: docs[i].data(),
-                  isLast: i == docs.length - 1,
-                ),
+                _InvoiceRow(data: docs[i].data(), isLast: i == docs.length - 1),
             ],
           ),
         );
@@ -867,6 +1031,7 @@ class _InvoiceRow extends StatelessWidget {
       final d = DateTime.fromMillisecondsSinceEpoch(s * 1000).toUtc();
       return '${d.year}-${d.month.toString().padLeft(2, '0')}-${d.day.toString().padLeft(2, '0')}';
     }
+
     if (start == null || end == null) return '—';
     return '${fmt(start)} → ${fmt(end)}';
   }
@@ -903,7 +1068,9 @@ class _InvoiceRow extends StatelessWidget {
                 Text(
                   period,
                   style: const TextStyle(
-                      fontSize: 13, fontWeight: FontWeight.w600),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
@@ -913,8 +1080,8 @@ class _InvoiceRow extends StatelessWidget {
                     color: status == 'paid'
                         ? const Color(0xFF1B5E20)
                         : status == 'open' || status == 'uncollectible'
-                            ? const Color(0xFFB71C1C)
-                            : Colors.black54,
+                        ? const Color(0xFFB71C1C)
+                        : Colors.black54,
                   ),
                 ),
               ],
@@ -925,8 +1092,7 @@ class _InvoiceRow extends StatelessWidget {
             child: Text(
               amount,
               textAlign: TextAlign.right,
-              style: const TextStyle(
-                  fontSize: 14, fontWeight: FontWeight.w600),
+              style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
             ),
           ),
           const SizedBox(width: 12),

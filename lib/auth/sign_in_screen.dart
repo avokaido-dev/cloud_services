@@ -97,8 +97,10 @@ class _TopBar extends StatelessWidget {
             onPressed: () => context.go('/tutorial'),
             style: TextButton.styleFrom(
               foregroundColor: Brand.darkGreen,
-              textStyle:
-                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              textStyle: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             child: const Text('Tutorial'),
           ),
@@ -106,8 +108,10 @@ class _TopBar extends StatelessWidget {
             onPressed: () => context.go('/investors'),
             style: TextButton.styleFrom(
               foregroundColor: Brand.darkGreen,
-              textStyle:
-                  const TextStyle(fontSize: 14, fontWeight: FontWeight.w600),
+              textStyle: const TextStyle(
+                fontSize: 14,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             child: const Text('For investors'),
           ),
@@ -116,8 +120,7 @@ class _TopBar extends StatelessWidget {
             onPressed: primaryAction,
             style: FilledButton.styleFrom(
               backgroundColor: Brand.green,
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
             child: Text(signedInWithWorkspace ? 'Open portal' : 'Sign in'),
           ),
@@ -132,10 +135,7 @@ class _TopBar extends StatelessWidget {
 // ---------------------------------------------------------------------------
 
 class _Hero extends StatelessWidget {
-  const _Hero({
-    required this.auth,
-    required this.onPrimaryPressed,
-  });
+  const _Hero({required this.auth, required this.onPrimaryPressed});
   final AuthService auth;
   final VoidCallback onPrimaryPressed;
 
@@ -195,9 +195,13 @@ class _Hero extends StatelessWidget {
                     style: FilledButton.styleFrom(
                       backgroundColor: Brand.green,
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 16),
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
                       textStyle: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w600),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   OutlinedButton.icon(
@@ -208,9 +212,13 @@ class _Hero extends StatelessWidget {
                       foregroundColor: Brand.green,
                       side: BorderSide(color: Brand.green.withAlpha(120)),
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 24, vertical: 16),
+                        horizontal: 24,
+                        vertical: 16,
+                      ),
                       textStyle: const TextStyle(
-                          fontSize: 15, fontWeight: FontWeight.w600),
+                        fontSize: 15,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                 ],
@@ -242,9 +250,13 @@ class _SignInCardState extends State<_SignInCard> {
   _EmailMode _mode = _EmailMode.signUp;
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
+  final _setupPasswordController = TextEditingController();
+  final _setupConfirmController = TextEditingController();
   bool _emailBusy = false;
   bool _oauthBusy = false;
   bool _obscure = true;
+  bool _setupObscure = true;
+  bool _setupConfirmObscure = true;
 
   @override
   void initState() {
@@ -261,6 +273,8 @@ class _SignInCardState extends State<_SignInCard> {
     widget.auth.removeListener(_onAuthUpdate);
     _emailController.dispose();
     _passwordController.dispose();
+    _setupPasswordController.dispose();
+    _setupConfirmController.dispose();
     super.dispose();
   }
 
@@ -288,17 +302,17 @@ class _SignInCardState extends State<_SignInCard> {
   Future<void> _forgotPassword() async {
     final email = _emailController.text.trim();
     if (email.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Enter your email first.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Enter your email first.')));
       return;
     }
     widget.auth.clearError();
     await widget.auth.sendPasswordResetEmail(email);
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Password reset sent to $email.')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('Password reset sent to $email.')));
     }
   }
 
@@ -327,10 +341,12 @@ class _SignInCardState extends State<_SignInCard> {
               ],
             ),
             child: signedIn
-                ? _buildSignedIn(context)
+                ? widget.auth.requireInviteSignInSetup
+                      ? _buildRequiredSignInSetup()
+                      : _buildSignedIn(context)
                 : awaitingEmailLink
-                    ? _buildEmailLinkConfirm()
-                    : _buildSignedOut(),
+                ? _buildEmailLinkConfirm()
+                : _buildSignedOut(),
           ),
         ),
       ),
@@ -374,8 +390,10 @@ class _SignInCardState extends State<_SignInCard> {
           style: FilledButton.styleFrom(
             backgroundColor: Brand.green,
             padding: const EdgeInsets.symmetric(vertical: 14),
-            textStyle:
-                const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+            textStyle: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           child: _emailBusy
               ? const SizedBox(
@@ -409,37 +427,226 @@ class _SignInCardState extends State<_SignInCard> {
     if (mounted) setState(() => _emailBusy = false);
   }
 
+  Future<void> _linkRequiredProvider(Future<void> Function() fn) async {
+    widget.auth.clearError();
+    setState(() => _oauthBusy = true);
+    await fn();
+    if (mounted) setState(() => _oauthBusy = false);
+  }
+
+  Future<void> _setRequiredPassword() async {
+    final password = _setupPasswordController.text;
+    final confirm = _setupConfirmController.text;
+    if (password.isEmpty || confirm.isEmpty) return;
+    if (password.length < 6) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Use at least 6 characters.')),
+      );
+      return;
+    }
+    if (password != confirm) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Passwords do not match.')));
+      return;
+    }
+    widget.auth.clearError();
+    setState(() => _emailBusy = true);
+    await widget.auth.setPasswordForCurrentUser(password);
+    if (mounted) setState(() => _emailBusy = false);
+  }
+
+  Widget _buildRequiredSignInSetup() {
+    final email = widget.auth.user?.email ?? 'your account';
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const Text(
+          'Choose how you sign in next time',
+          textAlign: TextAlign.center,
+          style: TextStyle(
+            fontSize: 22,
+            fontWeight: FontWeight.w700,
+            color: Brand.darkGreen,
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'You are signed in as $email. Before continuing, link an SSO '
+          'provider or create a password so you can sign in again later.',
+          textAlign: TextAlign.center,
+          style: const TextStyle(fontSize: 13, color: Colors.black54),
+        ),
+        const SizedBox(height: 24),
+        _ProviderButton(
+          label: 'Link GitHub',
+          icon: Icons.code,
+          loading: _oauthBusy,
+          onPressed: _oauthBusy
+              ? null
+              : () => _linkRequiredProvider(
+                  widget.auth.linkCurrentUserWithGithub,
+                ),
+        ),
+        const SizedBox(height: 10),
+        _ProviderButton(
+          label: 'Link Google',
+          icon: Icons.g_mobiledata,
+          loading: _oauthBusy,
+          onPressed: _oauthBusy
+              ? null
+              : () => _linkRequiredProvider(
+                  widget.auth.linkCurrentUserWithGoogle,
+                ),
+        ),
+        const SizedBox(height: 10),
+        _ProviderButton(
+          label: 'Link Microsoft',
+          icon: Icons.business,
+          loading: _oauthBusy,
+          onPressed: _oauthBusy
+              ? null
+              : () => _linkRequiredProvider(
+                  widget.auth.linkCurrentUserWithMicrosoft,
+                ),
+        ),
+        const SizedBox(height: 10),
+        _ProviderButton(
+          label: 'Link Apple',
+          icon: Icons.apple,
+          loading: _oauthBusy,
+          onPressed: _oauthBusy
+              ? null
+              : () =>
+                    _linkRequiredProvider(widget.auth.linkCurrentUserWithApple),
+        ),
+        const SizedBox(height: 18),
+        const Row(
+          children: [
+            Expanded(child: Divider()),
+            Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Text(
+                'or set a password',
+                style: TextStyle(color: Colors.black45, fontSize: 12),
+              ),
+            ),
+            Expanded(child: Divider()),
+          ],
+        ),
+        const SizedBox(height: 16),
+        TextField(
+          controller: _setupPasswordController,
+          obscureText: _setupObscure,
+          autofillHints: const [AutofillHints.newPassword],
+          decoration: InputDecoration(
+            labelText: 'New password',
+            helperText: 'At least 6 characters',
+            border: const OutlineInputBorder(),
+            isDense: true,
+            suffixIcon: IconButton(
+              icon: Icon(
+                _setupObscure
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+              ),
+              onPressed: () => setState(() => _setupObscure = !_setupObscure),
+            ),
+          ),
+        ),
+        const SizedBox(height: 12),
+        TextField(
+          controller: _setupConfirmController,
+          obscureText: _setupConfirmObscure,
+          autofillHints: const [AutofillHints.newPassword],
+          decoration: InputDecoration(
+            labelText: 'Confirm password',
+            border: const OutlineInputBorder(),
+            isDense: true,
+            suffixIcon: IconButton(
+              icon: Icon(
+                _setupConfirmObscure
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+              ),
+              onPressed: () =>
+                  setState(() => _setupConfirmObscure = !_setupConfirmObscure),
+            ),
+          ),
+          onSubmitted: (_) => _setRequiredPassword(),
+        ),
+        const SizedBox(height: 12),
+        FilledButton(
+          onPressed: _emailBusy ? null : _setRequiredPassword,
+          style: FilledButton.styleFrom(
+            backgroundColor: Brand.green,
+            padding: const EdgeInsets.symmetric(vertical: 14),
+            textStyle: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+          child: _emailBusy
+              ? const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : const Text('Save password'),
+        ),
+        if (widget.auth.errorMessage != null) ...[
+          const SizedBox(height: 12),
+          Text(
+            widget.auth.errorMessage!,
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.red, fontSize: 13),
+          ),
+        ],
+        const SizedBox(height: 12),
+        const Text(
+          'This step is required for invited users so you do not get locked '
+          'out after the one-time email link is used.',
+          textAlign: TextAlign.center,
+          style: TextStyle(fontSize: 11.5, color: Colors.black45),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSignedIn(BuildContext context) {
     final auth = widget.auth;
     final email = auth.user?.email ?? 'your account';
     final (title, body, cta, target) = switch (auth.status) {
       AuthStatus.signedOut => (
-          'Signed out',
-          'You were signed out. Sign in again to continue.',
-          null,
-          null,
-        ),
+        'Signed out',
+        'You were signed out. Sign in again to continue.',
+        null,
+        null,
+      ),
       AuthStatus.signedInPending => (
-          "You're signed in",
-          'Loading your workspace…',
-          null,
-          null,
-        ),
+        "You're signed in",
+        'Loading your workspace…',
+        null,
+        null,
+      ),
       AuthStatus.signedInNoWorkspace => (
-          "You're signed in",
-          'No workspace yet for $email. Create one to get started — you '
-              'will become the org admin for your email domain.',
-          'Create workspace',
-          '/create-workspace',
-        ),
+        "You're signed in",
+        'No workspace yet for $email. Create one to get started — you '
+            'will become the org admin for your email domain.',
+        'Create workspace',
+        '/create-workspace',
+      ),
       AuthStatus.signedInWithWorkspace => (
-          "You're signed in",
-          auth.isOrgAdmin
-              ? 'Continue to your admin workspace.'
-              : 'Continue to download the desktop app.',
-          'Continue',
-          auth.isOrgAdmin ? '/workspace/costs' : '/workspace/download',
-        ),
+        "You're signed in",
+        auth.isOrgAdmin
+            ? 'Continue to your admin workspace.'
+            : 'Continue to download the desktop app.',
+        'Continue',
+        auth.isOrgAdmin ? '/workspace/costs' : '/workspace/download',
+      ),
     };
 
     return Column(
@@ -474,10 +681,7 @@ class _SignInCardState extends State<_SignInCard> {
                   const SizedBox(height: 2),
                   Text(
                     email,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      color: Colors.black54,
-                    ),
+                    style: const TextStyle(fontSize: 13, color: Colors.black54),
                     overflow: TextOverflow.ellipsis,
                   ),
                 ],
@@ -486,10 +690,7 @@ class _SignInCardState extends State<_SignInCard> {
           ],
         ),
         const SizedBox(height: 20),
-        Text(
-          body,
-          style: const TextStyle(fontSize: 14, height: 1.5),
-        ),
+        Text(body, style: const TextStyle(fontSize: 14, height: 1.5)),
         if (auth.status == AuthStatus.signedInPending) ...[
           const SizedBox(height: 20),
           const Center(
@@ -507,8 +708,10 @@ class _SignInCardState extends State<_SignInCard> {
             style: FilledButton.styleFrom(
               backgroundColor: Brand.green,
               padding: const EdgeInsets.symmetric(vertical: 14),
-              textStyle:
-                  const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              textStyle: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w600,
+              ),
             ),
             child: Text(cta),
           ),
@@ -559,16 +762,18 @@ class _SignInCardState extends State<_SignInCard> {
           label: 'Continue with GitHub',
           icon: Icons.code,
           loading: _oauthBusy,
-          onPressed:
-              _oauthBusy ? null : () => _tryOAuth(widget.auth.signInWithGithub),
+          onPressed: _oauthBusy
+              ? null
+              : () => _tryOAuth(widget.auth.signInWithGithub),
         ),
         const SizedBox(height: 10),
         _ProviderButton(
           label: 'Continue with Google',
           icon: Icons.g_mobiledata,
           loading: _oauthBusy,
-          onPressed:
-              _oauthBusy ? null : () => _tryOAuth(widget.auth.signInWithGoogle),
+          onPressed: _oauthBusy
+              ? null
+              : () => _tryOAuth(widget.auth.signInWithGoogle),
         ),
         const SizedBox(height: 10),
         _ProviderButton(
@@ -584,8 +789,9 @@ class _SignInCardState extends State<_SignInCard> {
           label: 'Continue with Apple',
           icon: Icons.apple,
           loading: _oauthBusy,
-          onPressed:
-              _oauthBusy ? null : () => _tryOAuth(widget.auth.signInWithApple),
+          onPressed: _oauthBusy
+              ? null
+              : () => _tryOAuth(widget.auth.signInWithApple),
         ),
         const SizedBox(height: 18),
         if (!_showEmail)
@@ -595,8 +801,10 @@ class _SignInCardState extends State<_SignInCard> {
             label: const Text('Use email and password instead'),
             style: TextButton.styleFrom(
               foregroundColor: Colors.black54,
-              textStyle:
-                  const TextStyle(fontSize: 13, fontWeight: FontWeight.w500),
+              textStyle: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w500,
+              ),
             ),
           )
         else
@@ -607,10 +815,11 @@ class _SignInCardState extends State<_SignInCard> {
             busy: _emailBusy,
             obscure: _obscure,
             onObscureToggle: () => setState(() => _obscure = !_obscure),
-            onModeToggle: () => setState(() => _mode =
-                _mode == _EmailMode.signUp
-                    ? _EmailMode.signIn
-                    : _EmailMode.signUp),
+            onModeToggle: () => setState(
+              () => _mode = _mode == _EmailMode.signUp
+                  ? _EmailMode.signIn
+                  : _EmailMode.signUp,
+            ),
             onSubmit: _submitEmail,
             onForgot: _forgotPassword,
             onHide: () => setState(() => _showEmail = false),
@@ -713,9 +922,11 @@ class _EmailBlock extends StatelessWidget {
             border: const OutlineInputBorder(),
             isDense: true,
             suffixIcon: IconButton(
-              icon: Icon(obscure
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined),
+              icon: Icon(
+                obscure
+                    ? Icons.visibility_outlined
+                    : Icons.visibility_off_outlined,
+              ),
               onPressed: onObscureToggle,
             ),
           ),
@@ -737,15 +948,19 @@ class _EmailBlock extends StatelessWidget {
           style: FilledButton.styleFrom(
             backgroundColor: Brand.green,
             padding: const EdgeInsets.symmetric(vertical: 14),
-            textStyle:
-                const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w600),
+            textStyle: const TextStyle(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w600,
+            ),
           ),
           child: busy
               ? const SizedBox(
                   width: 18,
                   height: 18,
                   child: CircularProgressIndicator(
-                      strokeWidth: 2, color: Colors.white),
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
                 )
               : Text(isSignUp ? 'Create account' : 'Sign in'),
         ),
@@ -815,8 +1030,7 @@ class _ProviderButton extends StatelessWidget {
         padding: const EdgeInsets.symmetric(vertical: 16),
         foregroundColor: Brand.darkGreen,
         side: BorderSide(color: Brand.green.withAlpha(90)),
-        textStyle:
-            const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
       ),
     );
   }
