@@ -367,31 +367,30 @@ class AuthService extends ChangeNotifier {
     _workspaceId = token.claims?['workspaceId'] as String?;
     _workspaceRole = token.claims?['workspaceRole'] as String?;
 
-    // No workspace yet — ask the backend whether the caller's email domain
-    // already maps to an org. If it does, the function auto-joins them as a
-    // member and we re-read claims. If not, fall through to the create-
-    // workspace flow (where they'll become the admin for their domain).
+    // Always ask the backend to resolve (and if needed re-sync) the workspace
+    // and role claims. This covers both the no-workspace case (auto-join by
+    // domain) and the case where an admin changed the user's role after their
+    // last login — without this call, a stale 'member' claim would never be
+    // refreshed for users who already have a workspaceId claim.
     //
     // Hard timeout so a missing / misconfigured function never strands the
     // UI in `signedInPending` — we'd rather route to create-workspace than
     // show a blank loading state indefinitely.
-    if (_workspaceId == null || _workspaceId!.isEmpty) {
-      try {
-        final result = await FirebaseFunctions.instance
-            .httpsCallable('resolveWorkspaceForUser')
-            .call<Map<String, dynamic>>()
-            .timeout(const Duration(seconds: 8));
-        final joined = result.data['joined'] as bool? ?? false;
-        if (joined) {
-          token = await user.getIdTokenResult(true);
-          _workspaceId = token.claims?['workspaceId'] as String?;
-          _workspaceRole = token.claims?['workspaceRole'] as String?;
-        }
-      } catch (e) {
-        // Non-fatal: if the lookup fails or times out, proceed as if no
-        // workspace was found so the user can still create one manually.
-        debugPrint('[auth] resolveWorkspaceForUser failed: $e');
+    try {
+      final result = await FirebaseFunctions.instance
+          .httpsCallable('resolveWorkspaceForUser')
+          .call<Map<String, dynamic>>()
+          .timeout(const Duration(seconds: 8));
+      final joined = result.data['joined'] as bool? ?? false;
+      if (joined) {
+        token = await user.getIdTokenResult(true);
+        _workspaceId = token.claims?['workspaceId'] as String?;
+        _workspaceRole = token.claims?['workspaceRole'] as String?;
       }
+    } catch (e) {
+      // Non-fatal: if the lookup fails or times out, keep the claims we
+      // already read above so the user is not stranded in signedInPending.
+      debugPrint('[auth] resolveWorkspaceForUser failed: $e');
     }
 
     _status = (_workspaceId == null || _workspaceId!.isEmpty)
