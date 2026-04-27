@@ -46,7 +46,6 @@ class _PaymentMethodInfo {
 
 class _BillingScreenState extends State<BillingScreen> {
   bool _ensuringCustomer = false;
-  bool _startingSubscription = false;
   bool _openingPortal = false;
   bool _loadingPaymentMethod = false;
   _PaymentMethodInfo? _paymentMethodInfo;
@@ -110,35 +109,6 @@ class _BillingScreenState extends State<BillingScreen> {
       setState(() => _error = e.toString());
     } finally {
       if (mounted) setState(() => _ensuringCustomer = false);
-    }
-  }
-
-  Future<void> _startSubscription() async {
-    final wsId = widget.auth.workspaceId;
-    if (wsId == null) return;
-    setState(() {
-      _startingSubscription = true;
-      _error = null;
-      _notice = null;
-    });
-    try {
-      await FirebaseFunctions.instance
-          .httpsCallable('startStripeSubscription')
-          .call<Map<String, dynamic>>({'workspaceId': wsId});
-      setState(() => _notice = 'Subscription activated.');
-    } on FirebaseFunctionsException catch (e) {
-      if (e.code == 'failed-precondition' &&
-          (e.message?.contains('ensureStripeCustomer') ?? false)) {
-        setState(
-          () => _error = 'Create the Stripe customer first, then try again.',
-        );
-      } else {
-        setState(() => _error = e.message ?? 'Could not start subscription.');
-      }
-    } catch (e) {
-      setState(() => _error = e.toString());
-    } finally {
-      if (mounted) setState(() => _startingSubscription = false);
     }
   }
 
@@ -234,12 +204,10 @@ class _BillingScreenState extends State<BillingScreen> {
               return _SubscriptionCard(
                 data: data,
                 ensuring: _ensuringCustomer,
-                starting: _startingSubscription,
                 opening: _openingPortal,
                 loadingPaymentMethod: _loadingPaymentMethod,
                 paymentMethodInfo: _paymentMethodInfo,
                 onEnsureCustomer: _ensureCustomer,
-                onStartSubscription: _startSubscription,
                 onOpenPortal: _openPortal,
                 onRefreshPaymentMethod: _fetchPaymentMethod,
               );
@@ -638,24 +606,20 @@ class _SubscriptionCard extends StatelessWidget {
   const _SubscriptionCard({
     required this.data,
     required this.ensuring,
-    required this.starting,
     required this.opening,
     required this.loadingPaymentMethod,
     required this.paymentMethodInfo,
     required this.onEnsureCustomer,
-    required this.onStartSubscription,
     required this.onOpenPortal,
     required this.onRefreshPaymentMethod,
   });
 
   final Map<String, dynamic>? data;
   final bool ensuring;
-  final bool starting;
   final bool opening;
   final bool loadingPaymentMethod;
   final _PaymentMethodInfo? paymentMethodInfo;
   final VoidCallback onEnsureCustomer;
-  final VoidCallback onStartSubscription;
   final VoidCallback onOpenPortal;
   final VoidCallback onRefreshPaymentMethod;
 
@@ -665,8 +629,6 @@ class _SubscriptionCard extends StatelessWidget {
     final subscriptionId = data?['subscriptionId'] as String?;
     final status = data?['subscriptionStatus'] as String?;
     final cancelAtPeriodEnd = data?['cancelAtPeriodEnd'] as bool? ?? false;
-    final hasLiveSubscription =
-        status == 'active' || status == 'trialing' || status == 'past_due';
     final hasPaymentMethod =
         paymentMethodInfo?.hasPaymentMethod ??
         (data?['hasPaymentMethod'] as bool? ?? false);
@@ -726,18 +688,6 @@ class _SubscriptionCard extends StatelessWidget {
                         )
                       : const Icon(Icons.person_add_outlined),
                   label: const Text('Create Stripe customer'),
-                ),
-              if (customerId != null && !hasLiveSubscription)
-                FilledButton.icon(
-                  onPressed: starting ? null : onStartSubscription,
-                  icon: starting
-                      ? const SizedBox(
-                          width: 14,
-                          height: 14,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.play_circle_outline),
-                  label: const Text('Start subscription'),
                 ),
               if (customerId != null)
                 OutlinedButton.icon(
